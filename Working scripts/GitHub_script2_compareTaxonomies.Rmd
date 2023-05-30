@@ -1,0 +1,83 @@
+---
+title: "GitHub_script2_compareTaxLists"
+author: "emlombardi"
+date: "2023-05-17"
+output: html_document
+---
+
+#Info Do you have a regional or taxonomic species list that you can compare your larger data to? That's great! Are you assembling this diversity baseline de novo? That's also rad. The script here is optional; you do not need to run it for our next steps (starting in script 3).
+
+That said, if you have an expert list to use in verifying the taxonomic diversity of your complied dataset, use it! You can decide how much you want to depend on the list, but if you really want to make sure you're not including any aberrant taxonomic groups, you could use it to filter your larger dataset. That's not what we do here; we use an expert-compiled list of species in New Mexico (PAlist) as a comparison, but we do not filter to include only the species listed on this list.
+
+```{r libraries}
+
+```
+
+## Read in data
+
+There are two necessary datasets for this analysis: 1. Your data from script 1 2. Expert-compiled list for comparison
+
+```{r}
+#your data (if it's not already loaded)
+dat<-read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/datClean_allrecords.csv", header=TRUE)
+
+#read in expert list
+PAlist <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/PAlist_cleaned.csv", header=TRUE) 
+names(PAlist)
+
+```
+
+#Compare your data to the raw expert data You may or may not want to harmonize the list of unique taxa from the expert list. We do, but not until the next chunk. Before that, we want to compare the taxonomic groups between our full dataset and the raw (pre-harmonized) expert dataset.
+
+```{r}
+#compare families
+length(unique(dat$Accepted_family))
+length(unique(PAlist$family)) 
+
+#compare genera
+length(unique(dat$Genus_matched))
+length(unique(PAlist$paGenus)) 
+
+#compare species
+length(unique(dat$Accepted_name))
+length(unique(PAlist$taxon)) 
+
+
+
+```
+
+#Compare to harmonized list You likey want to harmonize the taxonomic list that you're using as your expert list, too. This is not because the expert who created the list is wrong; it's to ensure that you are comparing equivalent data products.
+
+The harmonized expert data frame will be PA.ls after the next chunk.
+
+```{r}
+
+PA.ls <- unique(PAlist$taxon) #unique taxa
+PA_tax <-TNRS(taxonomic_names = PA.ls, sources = c("wcvp"))
+
+PA.ls <- dplyr::left_join(PAlist, PA_tax, by=c('taxon'='Name_submitted'), keep=TRUE) #join higher tax with original data frame
+
+
+
+#now check the number of species
+length(unique(PA.ls$Accepted_name)) #4478 unique names in expert list
+length(unique(dat$Accepted_name)) #7370 unique names in our list
+
+
+```
+
+# Family-level check
+Not checking against an expert list; here we're just checking to see if family level taxonomy seems reasonable pre- versus post- harmonization. 
+
+```{r}
+famCheck <- dat %>%
+  select(family, Accepted_family, Name_submitted, Accepted_name)
+ 
+famCheck <- famCheck %>% filter(family != Accepted_family | xor(is.na(family), is.na(Accepted_family))) %>% group_by(family) #7566 records with different family level classificaiton pre and post harmonization
+
+
+write.csv(famCheck, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/familyMismatches.csv", row.names=TRUE)
+
+length(unique(famCheck$Accepted_family)) #107 families output
+length(unique(famCheck$family)) #226 families input
+```
