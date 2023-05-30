@@ -1,0 +1,347 @@
+---
+title: "GitHub UNM Herbarium project"
+author: "emlombardi"
+date: "2023-05-15"
+output: html_document
+---
+
+
+## Introduction
+
+This file details the initial steps that should be taken when assessing patterns of regional botanical collections. It was written by EMLombardi as part of the UNM herbarium's analysis of spatial, temporal and taxonomic biases in botanical collections made from the state of New Mexico. 
+
+Researchers should decide which data aggregators are most suitable for their region or taxonomic interests. Here, we combine data from the global biodiversity aggregator GBIF with data from a regional herbarium consortium, SEINet. Note that many regional or taxonomically-focused databases, including SEINet, push their records to GBIF. Not all do, however, and some collections in a specific region may be housed in non-consortium herbaria and are therefore difficult to find without more global record aggregation. That said, it is important to consider the sources of records, the type of information you need for your analysis and the best ways to identify messy, duplicate or incorrect collections. 
+
+Here we require that all records have geographic coordinates (i.e. have been georeferenced). There are many more records that have yet to be georeferenced, and some researcher may choose to use all records regardless of spatial data or accuracy. We also require records to have, at minimum, genus-level taxonomic data and a year of collection. All decisions regarding non-systemic data cleaning are found in the CHUNK NUMBER. 
+
+Systemic biases also exist in biodiveristy data across scales and taxonomic groups. In particular, there are clear spatial and taxonomic issues that must be addressed by researchers seeking to gain insight from large collection datasets. There are many ways to harmonize the taxonomic data (see Grenie paper), and numerous packages and papers describe the causes and consequences of spatial biases (Zizka et al, etc). Our decisions regarding spatial cleaning are detailed in CHUNK NUMBER, and the taxonomic cleaning steps are some of the first lines of code below. [ this might need to be updated depending on what we do ]
+
+```{r libraries}
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(TNRS)
+library(AOI)
+library(sf)
+library(rgeos)
+
+```
+
+#1. Load Data
+
+Downloaded CSV files from GBIF and SEINet are uploaded to R, and the polygon defining the boundary of present-day New Mexico is created. 
+
+```{r}
+#Botanical records loaded
+gbif <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/GBIF_May17_allRecords.csv", header=TRUE) #306078 records; February 2023 download from GBIF
+
+seinet <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet_May17_allRecords.csv", header=TRUE) #462569 records; February 2023 download from SEINet
+
+
+```
+
+
+#2. Taxonomic cleaning and harmonization
+Note that we have elected to use the package TNRS to harmonize taxonomic information in our dataset. There are a few steps we take before harmonizing to clean the string of characters (i.e. we remove special characters). We run the cleaned scientificName column from GBIF and SEINet through TNRS's harmonization function ('TNRS()') separately, and we have chosen to include authority information as part of the input. For GBIF, the column scientificName already includes authority information. For SEINet, we have to concatenate two columns to include this information in a single scientificName column. 
+
+The developers of the TNRS package recommend that researchers remove any records with blank space, NA or NULL values before harmonizing the species list. Find more information about this package here: https://github.com/EnquistLab/RTNRS
+
+### Clean input strings
+```{r}
+#Remove special characters from species column 
+gbif <- gbif %>%
+  mutate(scientificName = str_replace_all(scientificName, "[^[:alnum:][:space:]]", ""))
+
+
+#create SEINet column with species info and authority together, and then remove special characters from species column
+seinet <- seinet %>% 
+  rename("scientificName.v1" = "scientificName") %>%
+  mutate(scientificName = paste(scientificName.v1, scientificNameAuthorship, sep=" ")) %>%
+  mutate(scientificName = str_replace_all(scientificName, "[^[:alnum:][:space:]]", ""))
+
+
+#Remove any names with null, blankspace, NA values
+
+gbif <- gbif %>%
+  filter(!is.na(scientificName) & scientificName != "" & !is.null(scientificName)) 
+
+seinet <- seinet %>%
+  filter(!is.na(scientificName) & scientificName != "" & !is.null(scientificName))
+
+
+```
+
+### Run TNRS harmonization
+
+```{r}
+###GBIF###
+gbif.spplist <- unique(gbif$scientificName) #just a list of unique species names in the gbif data (N=13,403 unique species)
+gbif1<-gbif.spplist[1:4999]
+gbif2<-gbif.spplist[5000:9532]
+
+
+ls <- unique(gbif.spplist$Accepted_name) #CHECK this was 'dat$Accepted_name' but I think that was just leftover...I hope
+gbif_tax_NAMES <-TNRS(taxonomic_names = ls, sources = c("wcvp"))
+
+
+###SEINet###
+seinet.spplist <- unique(seinet$scientificName) #just a list of unique species names in the seinet data (N=19,261 unique species)
+seinet_tax <-TNRS(taxonomic_names = seinet.spplist, sources = c("wcvp"))
+
+#join the taxonomic dataframe output with the original GBIF dataset
+gbif <- dplyr::left_join(gbif, gbif_tax, by=c('scientificName'='Name_submitted'), keep=TRUE) #join higher tax with original data frame by the string submitted
+seinet <- dplyr::left_join(seinet, seinet_tax, by=c('scientificName'='Name_submitted'), keep=TRUE) #join higher tax with original data frame
+
+
+#What didn't harmonize?
+gbif.na <- gbif %>%
+  filter(Accepted_name=="") 
+length(unique(gbif.na$scientificName)) #168 species (882 records) in GBIF didn't harmonize
+
+
+seinet.na <- seinet %>%
+  filter(Accepted_name =="") 
+length(unique(seinet.na$scientificName)) #630 species (3979 records) in SEINet didn't harmonize. 
+
+#What happens when I run these through again?
+gbif2<-unique(gbif.na$scientificName)
+seinet2 <- unique(seinet.na$scientificName)
+
+#harmonize the taxa that didn't run the first time
+gbif_tax2 <- TNRS(taxonomic_names = gbif2, sources = c("wcvp"))
+seinet_tax2 <- TNRS(taxonomic_names = seinet2, sources = c("wcvp"))
+
+```
+
+
+# 3. Clean and Combine datasets
+
+
+### Duplicates removed from within each dataset
+
+```{r}
+
+###remove duplicates from within each separate df
+#GBIF
+gbif <-gbif %>% unite("concat.date", day:year, na.rm=FALSE, remove=FALSE)
+gbif <-gbif %>% distinct(recordNumber, scientificName, concat.date, .keep_all=TRUE) #removes CHECK records
+
+#SEINet
+seinet <- seinet %>%unite("concat.date", day:year, na.rm=FALSE, remove=FALSE)
+seinet <- seinet %>% distinct(recordNumber, scientificName, concat.date, .keep_all=TRUE) #removes 72,430 records
+
+
+```
+
+
+###Align columns between datasets
+
+```{r}
+
+#Rename GBIF columns to match SEINet
+gbif<-gbif%>%
+  rename("id"="gbifID") %>%
+  rename("verbatimElevation" = "elevation") #because these are column names in SEINet
+
+#check which columns exist in both seinet and gbif
+cols.seinet<-names(seinet)
+cols.gbif<-names(gbif) 
+cols.intersect<-intersect(cols.gbif, cols.seinet)
+
+# subset the initial data frames. 
+gbif <- gbif[,cols.intersect]
+seinet <- seinet[,cols.intersect] #still has a column for geometry
+
+###Add the source column to each
+gbif$sourceDB<-c("gbif")
+seinet$sourceDB<-c("seinet")
+
+###Just to see what's left out:
+cols.unique1<-setdiff(cols.gbif, cols.seinet) #columns only in gbif data frame
+cols.unique2<-setdiff(cols.seinet, cols.gbif) #columns only in seinet data frame
+
+
+```
+
+
+###Combine and remove duplicates
+Before we combine and identify duplicates that exist in both SEINet and GBIF we have 261,128 records in GBIF and 390,139 records in SEINet. 
+
+This second duplicate removal requires the researcher to identify unique records. SEINet pushes data to GBIF, but the unique identifiers assigned to different records may (or may not) be correct. Also there may be multiple specimen for a single plant, so we need to identify duplicate records using multiple pieces of information (OR DO WE). We recommend that researchers play around with their own data to figure out how best to identify duplicates wihtin their combined dataset. 
+
+Here we remove all but the first record (in row sequence) that have the same catalogNumber, which reduces our full GBIF+SEINet dataframe from 433,604 records to 264,857 records. This suggests that 168,747 records were in both GBIF and SEINet (pushed from SEINet to GBIF). This is fewer than the original SEINet data (by a lot) so we might want to re-do this. 
+
+```{r}
+#bind the dataframes
+dat<-rbind(gbif, seinet) 
+dim(dat) # 651,267 when combined 
+
+#remove duplicates
+dat <- dat %>% distinct(catalogNumber, .keep_all=TRUE) #411,604 unique records
+
+#save for posterity
+write.csv(dat, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/datdf_allrecs_TNRSharm.csv", row.names=TRUE)
+save(dat, seinet_tax, gbif_tax, file="fullDB_TNRSharm_output.RData")
+
+```
+
+
+#5. Identify and manage non-systematic issues
+Inconsistencies and problems exist within large biodiversity datasets, and not all of these can be predicted or cleaned through automation. We demonstrate a few steps that were important for our regional analysis, and encourage researchers to assess their own botanical records for additional or different abberations. 
+
+###State mismatches
+Identify the records that are problematic in terms of listed stateProvince. Mapping this is a good idea; some of these are border records with low coordinate precision. We remove ALL records that do not have a variation of 'New Mexico' in the stateProvince column, but different projects may require different treatment of these records. 
+
+```{r}
+
+###Check for stateProvince mismatches###
+
+state<-table(dat$stateProvince) #there are some issues here
+
+#If you downloaded only those records with your region of interest as the state province, you should not have to remove any/many records here
+#clean the main df to only include New Mexico variations
+dat_cl <- filter(dat, stateProvince %in% c("New Mexico", "New Mexico (State)", "New Mexico New Mexico", "New mexico", "NEW MEXICO", "New Mexico (新墨西哥州)")) #removes 1141 records 
+dim(dat_cl) #262268  records
+
+
+```
+
+###Temporal impossibilities
+There are often typos or other issues that need to be dealt with. We remove any records with year data suggesting that they were collected before 1800 or in the future. We also remove records that don't have any year data, which is the coarsest of the temporal information we need. 
+### Temporal 'Date' column
+```{r}
+###Add ordinal date column to nmcol_resolved
+
+library(lubridate)
+library(funtimes)
+# Checks if package is installed, installs if necessary, and loads package for current session
+pacman::p_load(
+  lubridate,  # general package for handling and converting dates  
+  parsedate,   # has function to "guess" messy dates
+  aweek,      # another option for converting dates to weeks, and weeks to dates
+  zoo,        # additional date/time functions
+  tidyverse,  # data management and visualization  
+  rio, 
+  occAssess)        # data import/export
+
+#check the column format for concatenated date column 
+class(dat$concat.date)
+
+# Convert to class date
+dat <- dat %>% 
+  mutate(date = as.Date(concat.date, format = "%d_%m_%Y")) #This adds a column to the whole dataset with Date class dates
+
+#Convert to ordinal dates
+dat <- dat %>% mutate(date.ordinal=lubridate::yday(date))
+
+
+```
+
+###Remove probmatic dime data 
+If there is no year data or impossible year data (e.g. in the future) remove those records.
+
+```{r}
+dat<- dat%>%filter(!year<"1800")%>%filter(!year>"2022") %>% filter(!year=="") #18,229 records removed. 
+dim(dat_cl) #now 257,894 records with complete and cleaned data
+
+```
+
+### Missing coordinates
+We did this earlier and there shouldn't be any records in our dataset that don't have coordinates, but here is a quick line to double-check, or to run if you skipped this. 
+
+
+###Taxonomic issues with SEINet database
+We observed that the phylum data from SEINet was incorrect. We only want to look at tracheophyta in our analysis, but apparently there are records that are from other clades and are incorrectly classified. All problems have sourceDB=seinet, so that's where we focus. 
+
+Here we check the phylum column, then remove any records from non-tracheophyta clades. We finally rename the erroneous column 'seinetTaxDivision' so that the information is retained. If we wanted to, we could add a new column with corrected phylum information...but it's not really necessary because everything in the dataframe should now belong to tracheophyta. 
+
+```{r}
+table(dat$phylum) #strange stuff happening here; all issues are from SEINet original data source
+
+
+#remove the data that don't belong in tracheophyta (N=3983 records)
+dat <- dat %>%
+  filter(!phylum %in% c("Ascomycota", "Cyanobacteria", "Marchantiophyta", "", "Chlorophyta", "Rhodophyta", "Bryophyta")) %>% #these are not vascular plants!
+  rename("seinetTaxDivison" = "phylum") #note that this is only for SEINet records!
+
+```
+
+
+###Taxonomic issues across taxonomic scale (species, genus, family, sub-species)
+There are some records that are only identified to the family level. This is not very helpful. For our analysis, we have chosen to remove anything that doesn't have a genus identification, but have kept those without species data. It's worth checking to see how many records aren't identified to the species level, though; this will be important to know for herbarium curators and researchers interested in specific taxonomic groups. 
+
+```{r}
+#REMOVE ANY RECORDS THAT DO NOT HAVE PROPER TAXONOMIC INFORMATION 
+
+#genus level problems
+genNA <- dat %>%
+  filter(Genus_matched == "") #970 records don't have genus information. REMOVE THESE but also send to Harp; some are at UNM
+
+#species level problems.
+sppNA <- dat %>%
+  filter(Accepted_name == "") #9810 records that don't have name information; leave for now
+
+#save those two tables to be checked
+write.csv(genNA, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/missingGenus.csv", row.names=TRUE)
+write.csv(sppNA, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/missingSpecies.csv", row.names=TRUE)
+
+
+
+#Remove missing specific epithet data (i.e. if TNRS could not find a match) 
+dat <- dat %>%
+  filter(!Accepted_name== "")
+
+#Also remove missing Accepted_species records because these are the ones that only have genus level info in Accepted_names column
+ table(dat$Accepted_name_rank) #We want species level at the coarsest for Accepted_name (which is the operational column for tax analyses)
+ table(dat$Name_matched_rank)
+ 
+ dat <- dat %>% 
+   filter(!Specific_epithet_matched== "") #removes 7546 records without species info
+ 
+ 
+ #Do you want to keep hybrids? 
+ nothoCheck <- dat %>%
+   filter(Accepted_name_rank=="nothosubspecies") #Only 6 records in our dataset; I'm going to keep them for now
+ 
+ write.csv(nothoCheck, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/nothosubspecies_Check.csv", row.names=TRUE)
+ 
+```
+
+
+###Institution-associated issues
+A good place to start looking for non-systematic issues is in the occurrenceID column. Those data that do not have occurenceID data often have other problems, too (though not always!). Take a look. 
+
+In our dataset, we identified an institution that was using a single lat/long coordinate for all New Mexico collections, so we removed these records. 
+
+When looking through records, ask which variables you absolutely need to have and the minimum requirements for data quality. For our purposes, we need correct taxonomic classification to at least the genus level, temporal resolution to year (at worst) and lat/long coordinates that 'seem' reasonable. This latter category is especially difficult to sort out. 
+
+```{r}
+o2<- filter(dat, occurrenceID %in% c("")) #this suggests that 81628 records don't have occurrenceID information. Check these for other possible issues
+dim(o2)
+o2<- o2 %>% group_by(sourceDB)
+table(o2$sourceDB) #most of the issues are from seinet
+table(o2$institutionCode) #there are some institutions that are problematic here
+
+write.csv(o2, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/missingOccID.csv", row.names=TRUE)
+
+jemez<- dat %>%
+  filter(institutionCode == "JEMEZ")
+table(jemez$sourceDB) #all from SEINet, but the rest of the data look good. 
+
+
+```
+
+#save the cleaned records (includes non-georeferenced)
+The files you save here include all GBIF+SEINet (or other data aggregator) data, including those that are not georeferenced. In the next script we will address issues in coordinates and georeferencing, which will reduce the number of records significantly. Spatial cleaning is a critical step if you are interested in any questions about taxonomic richness, spatial patterns, ranges/distributions, etc. It's been well-established in the literature (see Zizka et al 2019) that coordinate cleaning of large biodiversity data is a necessary step for rigorous analyses of species distributions, etc. 
+
+We highly recommend cleaning your data spatially, even if it means that you are working with far fewer records. Ideally, all natural history collections would already be georeferenced; tell your friendly funding agency how helpful that would be. Until that day, however, your results are dependent on your answer to this question: Do you care about the accuracy of the locality from which your data were collected? For most cases, the answer should be 'yes', and then you should proceed to spatial/coordinate cleaning. 
+
+But first: keep all the records that have been cleaned for temporal and taxomonic problems!
+
+```{r}
+
+write.csv(dat, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/datClean_allrecords.csv", row.names=TRUE)
+
+save(dat, file="datCleanAllRecords.RData")
+
+```
