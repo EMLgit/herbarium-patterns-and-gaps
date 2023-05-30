@@ -1,0 +1,388 @@
+---
+title: "Manuscript figures"
+author: "emlombardi"
+date: "2023-01-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Draft figures for the manuscript
+you will likely have to read in the datafiles in question. nmcol_resolved if it's already loaded in R, or load MasterDF_spattax_cleaned.csv from local machine. This is the cleaned data (spatial and taxonomically to species level as of Jan 16)
+
+#libraries
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(khroma) #for Tol color palette stuff
+
+theme_set(theme_pubr())
+iridescent <- colour("iridescent")
+
+#load
+#save full working environment
+dat <-load(file="script3secondtry_output.RData")
+dat <- env.v
+names(dat)
+
+```
+
+## Figure 1: Taxonomic trends
+here we want to plot the distribution of collections for each species. On the y axis is the count of species that occur in each bin. On the x axis is the number of collections/species (1, 2, ...)
+
+```{r pressure, echo=FALSE}
+dat<-alldat
+
+#species diversity
+spp <- dat %>%
+  group_by(Accepted_name) %>%
+  filter(!Accepted_name == "") %>% #there are 2398 records without species epithet 
+  dplyr::summarise(count = n())
+
+hist(spp$count, breaks=100)
+summary(spp$count)
+
+top15<-dat %>% 
+  add_count(Accepted_species) %>% 
+  filter(n %in% tail(sort(unique(n)), 15)) %>% 
+  filter(!Accepted_species == "") %>%
+  arrange(desc(n)) #table of all records for the ten best represented species
+top15list<-c(top15$Accepted_species)
+
+ggplot(top15, aes(Accepted_species))+
+  geom_bar() +
+  theme_pubclean()
+
+# Compute the frequency
+library(dplyr)
+fig1 <- dat %>%
+  group_by(Accepted_name)%>%
+  filter(!Accepted_name == "") %>%
+  tally(sort=TRUE)
+fig1
+
+
+# Create the bar plot. Use theme_pubclean() [in ggpubr]
+f1 <-ggplot(data = fig1, aes(n)) +
+  geom_histogram(color = "darkslategrey", stat="count", linewidth=3) +
+  scale_x_log10()+ #log the count
+  labs(title = "How many collections do we have per species? (log transformation)")
+f1
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/logScale_noSpp.png", f1, width = 10, height = 5, dpi = 300)
+
+
+singles<-fig1%>%filter(n=="1") #1285 species with a single collection
+
+print(fig1)
+summary(fig1)
+
+#Try a boxplot to see things a bit differently. 
+f1b<-ggplot(fig1, aes(x = factor(1), y = n)) +
+  geom_boxplot(width = 0.7, fill = "white") +
+  labs(x = NULL)   # Remove x axis label
+f1b
+
+
+#go up a taxonomic level
+fig1c <- dat %>%filter(!Genus_matched=="")%>%
+  group_by(Genus_matched)%>%tally(sort=TRUE)
+fig1c
+
+f1c<-ggplot(data = fig1c, aes(n)) +
+  geom_bar(color = "coral4", stat="count", size=1) +
+  scale_x_log10()+ #log the count
+  labs(title = "How many collections do we have per genus? (log transformation)")
+f1c
+
+singles.genus<-fig1c%>%filter(n=="1") #240 genera with only a single collection
+
+#go up a taxonomic level
+figfam <- dat %>%filter(!family=="")%>%
+  group_by(family)%>%tally(sort=TRUE)
+figfam
+
+
+###Look at only those species with more than one collection
+fig1d<-fig1%>%filter(!n=="1") #Only those with 2+ species
+f1d<-ggplot(data = fig1d, aes(n)) +
+  geom_bar(color = "steelblue", stat="count", size=1) +
+  labs(title = "How many species have multiple collections?")
+f1d
+
+```
+
+##Donut plots
+Using webr package to do this. Check out the tutorial here https://statdoe.com/pie-donut-chart-in-r/
+```{r}
+# loading the appropriate libraries
+library(ggplot2)
+library(webr)
+library(dplyr)
+
+# Building a table with the data for the plot
+donut1 = dat %>%
+  group_by(Taxonomic_status, Accepted_family) %>% 
+  tally(sort=TRUE) %>% 
+  filter(!Accepted_family=="", !Taxonomic_status=="Invalid") 
+
+pd1<-PieDonut(donut1, aes(Taxonomic_status, Accepted_family, count=n), title = "Taxonomic status: count of families", explode=2, r0=.6)
+
+pd1
+
+#look more closely at the synonyms
+donut2 = dat %>%  #21,279 of all records were taxonomic synonyms
+  filter(Taxonomic_status=="Synonym") %>%
+  filter(!Accepted_family=="", !Taxonomic_status=="Invalid") %>%
+  group_by(Accepted_family, Genus_submitted) %>% 
+  tally(sort=TRUE)
+
+pd2<-PieDonut(donut2, aes(Accepted_family, Genus_submitted, count=n), title = "Taxonomic status: count of synonymous families", explode=2, r0=.6, color="white")
+pd2 #this is super messy. The table donut2 is much more useful. 
+
+
+# Create an interactive donut chart with Plotly!
+pie1<-plot_ly(donut2, labels = ~Accepted_family, values = ~n, type = 'pie',
+             hole = 0.45, textposition = "inside",
+             textinfo = "label+percent",
+             marker = list(colors = c("#FFA07A", "#87CEFA", "#32CD32", "#DA70D6", "#FFD700"),
+                           line = list(color = "#FFFFFF", width = .25)))
+pie1
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/familyPiePlot.png", pie1, width = 10, height = 5, dpi = 300)
+
+plotly_IMAGE(pie1, format = "png", out_file = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/familyPiePlot.png")
+
+        
+```
+
+###Donut from Jansen's code
+Try using code from Jans to create donut plots in ggplot format
+```{r}
+## donut plot for proportion contribution of each database
+don3 <- dat_cl %>%
+  group_by(source) %>%
+  dplyr::summarise(count = n())%>%
+  filter(!count<100)
+
+# Compute percentages
+don3$frac <- don3$count / sum(don3$count)
+
+# Compute the cumulative percentages (top of each rectangle)
+don3$ymax <- cumsum(don3$frac)
+
+# Compute the bottom of each rectangle
+don3$ymin <- c(0, head(don3$ymax, n=-1))
+
+# Compute label position
+don3$labelPosition <- (don3$ymax + don3$ymin)/2
+
+# Compute a good label
+don3$label <- paste0(don3$order, ", ", don3$count)
+
+# Make the plot
+png(file.path("export",ver,"bdt_dbDonut.png"), width=2000, height=2000)
+
+ggplot(don3, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=source)) +
+	geom_rect() +
+	#geom_text( x=2, aes(y=labelPosition, label=label), size=6) + # x here controls label position (inner / outer)
+	scale_color_viridis("magma") +
+	coord_polar(theta="y") +
+	xlim(c(2, 4)) +
+	theme_void() #+
+	#theme(legend.position = "none")
+dev.off()
+
+
+```
+
+
+#Figure 2: Temporal trends
+Are there trends in when collections have been made? By year and by month/julien date?
+
+Idea for better figure/analysis: Find the right resource to determine monsoon seasonality and look at temporal trends in collections based on historical monsoons? Not reproducible unless I can find a publically-available rain resource (I can) that would be generalizable...
+
+```{r temporal}
+
+#fig2a: calculate the percent of total collections made each year
+
+fig2<-dat %>%group_by(year)%>%tally(sort=TRUE)%>%na.omit()
+
+
+time <- count(dat, year, Accepted_species, order)  %>% group_by(n)
+
+f2a<-ggplot(data = time, aes(x = year, y = n)) +
+    geom_line()+
+  labs(title="Collected species by year since 1800")
+f2a
+
+
+
+###
+time2<-dat %>% group_by(year)%>% filter(!year<1800)%>%tally(sort=TRUE) %>% na.omit() %>% mutate(ratio=n/sum(n))
+
+f2b<-ggplot(data = time2, aes(year, ratio)) +
+  geom_point(color = "slategray4",size = 2) +
+  geom_line(color="slategray4", stat="") + 
+  labs(title = "Percent of total holdings made each year")
+f2b
+
+
+###
+time3 <- time %>% group_by(year) %>% mutate(spp=n_distinct(Accepted_species))
+
+
+f2c<-ggplot(data = time3, aes(year, spp)) +
+  geom_point(color = "turquoise4", size =1) +
+  labs(title = "Number of species collected each year")
+f2c
+
+
+
+####Figure 2 temporal stats and trends in seasonality
+#https://cran.r-project.org/web/packages/funtimes/vignettes/trendtests.html
+#fig2a: calculate the percent of total collections made each year
+
+fig2d<-dat%>%group_by(date.ordinal)%>%tally(sort=TRUE)%>%na.omit()
+
+
+time <- count(dat, date.ordinal, taxized)  %>% group_by(n)
+f2d<-ggplot(data = time, aes(x = date.ordinal, y = n)) +
+    geom_line()+
+  labs(title="Collected species over ordinal time")
+f2d
+
+
+
+####Take out the taxonomic grouping and see how all 
+time <-count(dat, date.ordinal) %>% group_by(n) %>% na.omit()
+sp.yr<- ggplot(data = time, aes(x = date.ordinal, y = n)) +
+    geom_line()+
+    labs(title="Collected accessions over ordinal time")
+
+###OTHERS
+
+
+```
+#Environmental trends
+To get the next chunks to run, you need to have run the script '4. Download enviro data.Rmd', which is where we create spatially joined dataframes of occurrences and environmental variables. Load the 'env.v' csv file that is produced from the shapefiles (vector formatted environmental variables). 
+
+Here I'll produce figures to i) count total collections by environmental variable categories
+
+```{r}
+#load data
+env.v <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/environ_shps.csv")
+
+view(env.v)
+
+try<- env.v %>% group_by(physio.area) %>% mutate(physio.Asum = sum(physio.reg))
+
+
+ggplot(env.v, aes(x=physio.area, y=count(physio.reg)))+
+  geom_bar()
+
+##Plot number of taxa (count) divided by the area of each ecoregion
+#Try plotting to see about biases
+eco4<-env.v%>%group_by(ecoreg4) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+
+area.eco4<-env.v %>% group_by(ecoreg4) %>% 
+  summarise(area.sum=sum(ecoreg.area/1000)) %>%
+  na.omit()
+
+colnames(area.eco4)[2] <- gsub("\\s*\\[.*\\]", "", colnames(area.eco4)[2])
+
+
+eco4<-st_join(eco4, area.eco4)    
+
+eco4norm<- eco4 %>%
+  mutate(norm.count = (count - min(count)) / (max(count) - min(count))) %>%
+  mutate(ratio = (count/area.sum)*1000)  #change to kilometer 
+
+eco4norm <- eco4norm %>%
+  mutate(ratio.quants = quantile(ratio, probs = c(0, 0.25, 0.5, 0.75, 1)))
+
+ggplot(eco4norm, aes(area.sum, norm.count, col=ratio))+
+  geom_jitter(cex=2)+
+  theme(legend.position="none")
+
+
+###Ecoregion 3
+
+eco3<-env.v%>%group_by(ecoreg3) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+
+area.eco3<-env.v %>% group_by(ecoreg3) %>% 
+  summarise(area.sum=sum(ecoreg.area/1000)) %>%
+  na.omit()
+
+eco3<-st_join(eco3, area.eco3)    
+eco3norm<- eco3 %>%
+  mutate(norm.count = (count - min(count)) / (max(count) - min(count))) %>%
+  mutate(ratio = (count/area.sum)*1000) %>% #change to kilometer 
+  filter(!ecoreg3.x == "")
+  
+ggplot(eco3norm, aes(area.sum, norm.count, col=ecoreg3.x))+
+  geom_jitter(cex=4)+
+  #geom_text(aes(label = ecoreg3.x), vjust = 2) +
+  scale_fill_iridescent(reverse = FALSE) +
+  ggplot2::theme_bw() +
+  theme(legend.position="right")
+
+
+
+
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4areacount.png", width = 16, height = 10)
+
+
+##Rather than just total number of collections, check out the proportion of all collections
+
+
+ggplot(eco4, aes(area.sum, count/sum(count), col=ecoreg4.x))+
+  geom_jitter(cex=5)+
+  theme(legend.position="none") +
+  ggplot2::theme_bw() +
+  scale_colour_bright()
+
+
+
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4areacount.v2.png", width = 16, height = 10)
+
+
+```
+
+```{r}
+inst <- dat %>%
+  group_by(institutionCode) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+```
+
+
+
+###TRY plotting the map of ecoregions with colors
+ggplot(ecoreg.l4)+
+  geom_sf(aes(fill=US_L3NAME))+
+  theme(legend.position = "bottom")
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco3map.png", width = 16, height = 10)
+
+
+ggplot(ecoreg.l4)+
+  geom_sf(aes(fill=US_L4CODE))+
+  geom_sf(data=c2, aes(x=long, y=lat), cex=.1, alpha=.3)+
+  theme(legend.position = "none")
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4map+coords.png", width = 16, height = 10)
+
+
+
+```

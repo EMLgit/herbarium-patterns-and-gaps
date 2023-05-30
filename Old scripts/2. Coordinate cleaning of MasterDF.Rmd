@@ -1,0 +1,139 @@
+---
+title: "CoordCleaning_MasterDF"
+author: "emlombardi"
+date: "2022-10-02"
+output: html_document
+---
+
+#Objective: clean up coordinates in the master dataframe The csv file loaded here will be the occurrences for all plants from NM. It is created in the `Occ data wrangling` script.
+
+```{r libraries and data}
+#load libraries
+library(tidyverse)
+library(rgbif)
+library(sp)
+library(countrycode)
+library(CoordinateCleaner)
+
+
+#load RDA file instead
+load(file="script1_output.RData")
+load(file="rawDB_TNRSharm_output.RData") #If trying different harmonization methods; this is for TNRS alone
+
+```
+
+#Visualize the coordinates by mapping This helps make sure things are lining up in space
+
+```{r mapping}
+world.inp  <- map_data("world")
+
+ggplot()+
+  geom_map(data=world.inp, 
+           map=world.inp, 
+           aes(x=long, y=lat, map_id=region), 
+           fill = "grey80")+
+  xlim(min(dat.df$decimalLongitude, na.rm = T), 
+       max(dat.df$decimalLongitude, na.rm = T))+
+  ylim(min(dat.df$decimalLatitude, na.rm = T), 
+       max(dat.df$decimalLatitude, na.rm = T))+
+  geom_point(data = dat.df, 
+             aes(x = decimalLongitude, y = decimalLatitude, color=source),
+             size = 1)+
+  coord_fixed()+
+  theme_bw()+
+  theme(axis.title = element_blank())
+
+
+```
+
+#Clean coordinates based on metadata 
+There might be a few ways to tidy things up based on coordinate uncertainty, state locality, etc.
+
+Note that I'm going to rename `dat.df` to `dat_cl`, which will be the name of the main dataframe as we pass it through cleaning scripts. 
+
+```{r coord cleaning}
+# remove records without coordinates 
+dat_cl <- dat.df %>% filter(!is.na(decimalLongitude)) %>% filter(!is.na(decimalLatitude)) ###NONE removed. They all have coordinates (because that's how we built this dataset...so this is a good thing)
+dim(dat_cl) #264,744 records (feb 2023)
+
+# remove records with low coordinate precision
+hist(dat_cl$coordinateUncertaintyInMeters/1000, breaks = 100)
+
+dat_cl <- dat_cl %>% filter(coordinateUncertaintyInMeters/1000 <= 100 | is.na(coordinateUncertaintyInMeters)) #Removed 285 records (Feb2023)
+
+# remove unsuitable data sources, especially fossils
+table(dat_cl$basisOfRecord) #Why are there any human observations involved???? It just happens. Messes and stuff.
+
+dat_cl<-dat_cl%>% filter(!basisOfRecord=="HumanObservation", !basisOfRecord=="Observation", !basisOfRecord=="MachineObservation", !basisOfRecord=="LivingSpecimen") #this removes the strange 1163 records (feb2023)
+
+#remove impossible coordinates
+dat_cl<-dat_cl%>%filter(!decimalLatitude>90, !decimalLatitude< -90) #removes impossible records. There are none now (feb2023)
+
+```
+
+
+#Clean coordinates with CoordinateCleaner package
+
+```{r cleaning package}
+library(CoordinateCleaner)
+dat_cl<-data.frame(dat_cl)
+
+flags <- clean_coordinates(x = dat_cl, lon = "decimalLongitude", lat = "decimalLatitude", species = "Accepted_species", tests = c("capitals", "centroids", "equal", "gbif", "zeros", "seas"), seas_ref = buffland)  # flagged zero records! Our cleaning is working (feb2023)
+
+```
+
+#Map to visualize difference between cleaned and uncleaned coords
+
+```{r map differences}
+
+# first plot showing the retain records in green and the removed records in red. We don't have any flags, so this isn't super interesting.
+ggplot()+
+  geom_map(data=world.inp, 
+           map=world.inp, 
+           aes(x=long, y=lat, map_id=region), fill = "grey80")+
+  xlim(min(dat.df$decimalLongitude, na.rm = T),
+       max(dat.df$decimalLongitude, na.rm = T))+
+  ylim(min(dat.df$decimalLatitude, na.rm = T), 
+       max(dat.df$decimalLatitude, na.rm = T))+
+  geom_point(data = dat.df, 
+             aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "darkred", size = 1)+
+  geom_point(data = dat_cl, 
+             aes(x = decimalLongitude, y = decimalLatitude),
+             colour = "lightpink3", size = .2, alpha=0.5)+
+  coord_fixed()+
+  theme_bw()+
+  theme(axis.title = element_blank())
+
+# second plot showing only the retained species
+ggplot()+
+  geom_map(data=world.inp, map=world.inp,
+           aes(x=long, y=lat, map_id=region), 
+           fill = "grey80")+
+  xlim(min(dat_cl$decimalLongitude, na.rm = T), 
+       max(dat_cl$decimalLongitude, na.rm = T))+
+  ylim(min(dat_cl$decimalLatitude, na.rm = T), 
+       max(dat_cl$decimalLatitude, na.rm = T))+
+  geom_point(data = dat_cl, 
+             aes(x = decimalLongitude, y = decimalLatitude),
+             size = .5, alpha=.2)+
+  coord_fixed()+
+  theme_bw()+
+  theme(axis.title = element_blank())
+
+
+#IDEA: can I also map or grab the coordinates that were cleaned out of the dataset? It should just be the observations, I think, though
+
+```
+
+#Save the cleaned data
+This should be the data useful for all sorts of analyses (richness, temporal, etc). 
+
+```{r save}
+write_csv(dat_cl, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/dat_cl_Feb2023_script2.csv")
+
+#save full working environment
+save(dat_cl, flags, file="script2_output.RData")
+
+```
+This script removes 1,448 coordinates based on coordinate uncertainty and general spatial flags

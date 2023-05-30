@@ -1,0 +1,780 @@
+---
+title: "4. Download environmental data layers"
+author: "emlombardi"
+date: "2022-12-02"
+output: html_document
+---
+#Summary
+This code is a stand-alone script that will allow you to download enviornmental data layers from open sources. In this script we will also standardize the resolution of all rasters, the projection (specific???) and the extent (we clip to New Mexico in the southwestern United State). These are necessary steps before individual layers are stacked into a RasterBrick (??). 
+
+Useful information about accessible remotely sensed data sources: https://rspatial.org/rs/1-introduction.html
+
+Inputs:
+Outputs:
+
+```{r libraries}
+library(maps)
+library(mapview)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(spatstat)
+library(stars)
+library(stringr)
+library(tidyverse)
+library(spdep)
+library(splm)
+library(terra) #unloaded issue
+library(geodata) #unloaded issue
+library(ggplot2)
+library(ggpubr)
+library(prism)
+library(AOI)
+library(climateR)
+library(raster)
+library(rasterVis)
+
+theme_set(theme_pubr())
+
+
+#Area of interest. ADD THIS TO THE FIRST WKT DEFINITION
+aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
+class(aoi)
+plot(aoi$geometry) #sf boundary of NM state
+
+
+```
+
+#Load data
+
+```{r}
+##data from last cleaning step
+load(file="GitHub_script3_georefCleaned.RData")
+
+
+#create spatial feature from coordinates 
+
+c2 <- as.data.frame(dat_sf) %>% 
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=4326, remove=FALSE) 
+
+class(coords)
+class(c2) #sf format
+
+
+````
+
+###Try lining coords up with NM
+
+```{r}
+###Load shapefile of study area (in our case, New Mexico)
+bb.nm<-tigris::tracts(state = 'NM')
+bb.nm<-st_as_sf(bb.nm) %>% st_transform(crs=4326)
+
+##Does bb.nm line up with coords in the first place? YES
+plot(bb.nm$geometry)
+plot(c2$geometry, add=T, col="maroon", alpha=.05)
+
+# view!
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(rgeos)
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+###To check that sf layers are aligning:::
+plot(bb.nm$geometry, pch=16, cex=0.2, col="white")
+#plot(c2$taxa, col="goldenrod", pch=16)
+plot(c2$geometry, add=T, col="maroon", cex=.1, pch=18, alpha=.02)
+title("Herbarium collections across NM counties")
+
+#First spatial join between dat_cl and the county data. 
+#note that object `env.v` will be the working object that I'll add things to as I work in this script. Eventually save it as a new version of dat_cl
+env.v <- st_join(c2, left = TRUE, bb.nm["COUNTYFP"]) # join points IT WORKED!!!!!!! but somehow gained 265 records...
+class(env.v)
+
+check <- st_difference(c2, bb.nm["COUNTYFP"])
+
+###PLOT county collections
+ggplot(bb.nm)+
+  geom_sf(aes(fill=COUNTYFP))+
+  theme(legend.position = "bottom")
+
+bbnm1<-env.v %>% 
+  group_by(COUNTYFP) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+bbnm1
+
+ggplot(bbnm1, aes(x=reorder(COUNTYFP, -count), y=count, fill=COUNTYFP))+
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+##Environmental data
+There are multiple ways to access environmental data useful for geospatial analyses. We will use environmental data loaded into R using packages with API connections, as well as raster data downloaded from open source geospatial data providers. There are often high resolution or tailored geospatial data products developed for specific uses or regions; these can be quite pricey, or may require institutional affiliation to gain access. Our objective here is to make scripts fully reproducible, so we do not include any layers that require payment or institutional privileges. Users may want to consider additional sources for their own analyses, however. Rasters from many sources can be added into the raster stack (brick?) created in ADD CHUNK
+
+NOTE THAT YOU MAY HAVE TO SWITCH OFF SPHERICAL GEOMETRY (S2) USING THE FOLLOWING CODE:
+sf::sf_use_s2(FALSE)
+
+
+###SHAPEFILES
+Load New Mexico shapefiles 
+
+###1. Physiographic map of the usa that's not especially high res (not working)
+
+```{r}
+#switch off spherical geometry
+sf::sf_use_s2(FALSE)
+
+#physiographic map
+physio <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/physio_shp/physio.shp", crs=4326)
+physio$physio.area <- st_area(physio) #calculate area from geometries
+plot(st_geometry(physio)) #this is the physiographic map of the entire USA
+
+#Crop the full Physio layer to NM only
+#crop<-st_crop(physio, xmin=-109.05, ymin=31.33224, xmax=-103.0022, ymax=37.00014)
+#nmphysio2<-st_crop(physio.geo, st_bbox(geometry)) #I would rather crop to the NM wkt/boundary, but it's not working..
+
+#Are the coordinates aligning with map layer? YEP
+plot(physio$geometry, col=alpha("lightgray", 0.5), border="black", lwd=1.5)
+plot(aoi, add=T, color="darkgray", alpha=.2)
+plot(c2$geometry, add=T, col="maroon", pch=16, cex=.02)
+title("Physiographic map of USA with NM coordinates")
+
+
+#Join physio and coords to extract values
+sf::sf_use_s2(FALSE)
+env.v <- st_join(c2, left = TRUE, physio["PROVINCE"]) %>% st_join(left=TRUE, physio["physio.area"])
+
+                                                                  
+#env.v <- env.v %>% st_join(left = TRUE, physio["PROVINCE"]) %>% st_join(left = TRUE, physio["physio.area"]) #create new 
+
+
+###BASIC PLOTS
+ggplot(physio)+
+  geom_sf(aes(fill=PROVINCE))+
+  geom_sf(data=aoi, aes(alpha=0.02))+
+  theme(legend.position = "bottom")
+
+phys1<-env.v %>% group_by(physio.reg) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+phys1
+
+ggplot(phys1)+
+  geom_sf(aes(col=physio.reg))+
+  theme(legend.position = "right")
+
+ggplot(phys1, aes(x=reorder(physio.reg, -count), y=count, fill=physio.reg))+
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#save
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/phys1.png", width = 16, height = 10)
+
+```
+
+### 2. Geologic Regions
+```{r}
+#geologic map
+georeg <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/slo_GeologicRegions/slo_oggeolregions.shp")
+georeg <-st_transform(georeg, crs=4326) #necessary step to get coords in the right alignment
+georeg$georeg.area <- st_area(georeg) #calculate area from geometries
+plot(st_geometry(georeg)) #this is the geologic map of NM
+
+#Are the coordinates aligning with map layer? 
+plot(georeg$geometry, col=alpha("lightgray", 0.5), border="black", lwd=1.5)
+plot(c2$geometry, add=T, col="aquamarine4", pch=16, cex=.1, alpha=.02)
+title("Geologic map of USA with NM coordinates")
+
+#Join geologic and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, georeg["LABEL"])  %>% st_join(left = TRUE, georeg["georeg.area"])
+
+
+
+###BASIC PLOTS
+ggplot(georeg)+
+  geom_sf(aes(fill=LABEL))+
+  theme(legend.position = "r")
+
+g1<-env.v%>%group_by(geologic) %>%
+  dplyr::filter(!geologic=="NA") %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+g1
+
+ggplot(g1)+
+  geom_sf(aes(col=geologic))+
+  theme(legend.position = "right")
+
+ggplot(g1, aes(x=reorder(geologic, -count), y=count, fill=geologic))+
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+#save
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/phys1.png", width = 16, height = 10)
+
+```
+
+###3. Ecoregions: still need to add to the env.v dataframe
+```{r}
+#ecoregion map
+ecoreg.l4 <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/nm_ecoregions_l4/nm_eco_l4.shp")
+ ecoreg.l4 <-st_transform(ecoreg.l4, crs=4326) #necessary step to get coords in the right alignment
+ecoreg.l4$ecoreg.area <- st_area(ecoreg.l4) #calculate area from geometries
+
+plot(st_geometry(ecoreg.l4)) #this is the ecoregion map of NM
+
+#Are the coordinates aligning with map layer? YEP
+plot(ecoreg.l4$geometry, col=alpha("lightgray", 0.5), border="black", lwd=1.5)
+plot(c2$geometry, add=T, col="tomato3", pch=16, cex=.1, alpha=.5)
+title("Ecoregion map of USA with NM coordinates")
+
+#Join ecoregion and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, ecoreg.l4["US_L4NAME"])  %>% 
+  st_join(left =TRUE, ecoreg.l4["US_L3NAME"]) %>%
+  st_join(left = TRUE, ecoreg.l4["ecoreg.area"]) 
+
+
+
+#Try plotting to see about biases
+eco4<-env.v%>%group_by(ecoreg4) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+
+eco3<-env.v%>%group_by(ecoreg3)%>%
+  summarise(count = n()) %>%
+  arrange(desc(count))%>%
+  mutate_at("count", as.numeric)
+
+
+#Quick look at the distribution of collections from different ecoregions
+ggplot(eco4, aes(x=reorder(ecoreg4, -count), y=count, col=ecoreg4))+
+  geom_bar(stat="identity", fill="gray34") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(datgeo, aes(ecoreg4, ecoreg.area)) +
+      geom_bar(stat="identity", col="black")
+
+ggplot(eco3, aes(x=reorder(US_L3NAME, -count), y=count, fill=ecoreg3)) +
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle =90, vjust = 1, hjust=1))
+
+#save
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/eco4.png", width = 16, height = 10)
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco3.png", width = 16, height = 10)
+
+
+##Plot number of taxa (count) divided by the area of each ecoregion
+
+
+eco3<-st_join(eco3, area.eco3)      
+
+
+ggplot(eco3, aes(x=reorder(US_L3NAME.x, -count), y=count, fill=as.factor(area.sum)))+
+  geom_bar(stat="identity")+
+  theme(legend.position="none")+
+  theme(axis.text.x = element_text(angle =90, vjust = 1, hjust=1))
+
+ggplot(eco3, aes(count, area.sum, col=US_L3NAME.x, label=US_L3NAME.x))+
+  geom_jitter(cex=3)+
+  geom_text(hjust=.5, vjust=-1)+
+  theme(legend.position="none")
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco3areacount.png", width = 16, height = 10)
+
+
+####Replicate for Ecoregions layer 4
+##Plot number of taxa (count) divided by the area of each ecoregion
+area.eco4<-ecoreg.l4 %>% group_by(US_L4NAME) %>% 
+  summarise(area.sum=sum(Shape_Area/1000))
+
+eco4<-st_join(eco4, area.eco4)      
+
+ggplot(eco4, aes(area.sum, count, col=US_L4NAME.x))+
+  geom_jitter(cex=2)+
+  theme(legend.position="none")+
+  geom_text(aes(label=ifelse(area.sum>7000000,as.character(US_L4NAME.x),'')),hjust=.5,vjust=-1, cex=4)+
+  geom_text(aes(label=ifelse(count>8000,as.character(US_L4NAME.x),'')),hjust=.5,vjust=-1, cex=4)
+
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4areacount.png", width = 16, height = 10)
+
+
+##Rather than just total number of collections, check out the proportion of all collections
+ggplot(eco4, aes(area.sum, count/sum(count), col=US_L4NAME.x))+
+  geom_jitter(cex=2)+
+  theme(legend.position="none")+
+  geom_text(aes(label=ifelse(area.sum>7000000,as.character(US_L4NAME.x),'')),hjust=.5,vjust=-1, cex=5)+
+  geom_text(aes(label=ifelse(count>8000,as.character(US_L4NAME.x),'')),hjust=.5,vjust=-1, cex=5)
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4areacount.v2.png", width = 16, height = 10)
+
+
+###TRY plotting the map of ecoregions with colors
+ggplot(ecoreg.l4)+
+  geom_sf(aes(fill=US_L3NAME))+
+  theme(legend.position = "bottom")
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco3map.png", width = 16, height = 10)
+
+
+ggplot(ecoreg.l4)+
+  geom_sf(aes(fill=US_L4CODE))+
+  geom_sf(data=c2, aes(x=long, y=lat), cex=.1, alpha=.3)+
+  theme(legend.position = "none")
+
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco4map+coords.png", width = 16, height = 10)
+
+```
+
+### 4. Land ownership
+
+```{r}
+#land ownership shapefile map
+owner <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/SURFACE_OWN/Surface_Ownership.shp")
+owner <-st_transform(owner, crs=4326) #necessary step to get coords in the right alignment
+owner$own.area <- st_area(owner) #calculate area of land parcels
+
+#The shapefile is a bit messed up. https://stackoverflow.com/questions/68478179/how-to-resolve-spherical-geometry-failures-when-joining-spatial-data/
+sf::sf_use_s2(FALSE)
+
+plot(st_geometry(owner)) #this is the land ownership map of NM
+
+#Are the coordinates aligning with map layer? YES
+plot(owner$geometry, col=alpha("lightgrey", 0.5), lwd=.05)
+plot(c2$geometry, add=T, col="darkblue", pch=16, cex=.05, alpha=.5)
+title("Herbarium collections across land ownership categories in NM")
+
+#Join ownership areas and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, owner["own"])  %>% st_join(left = TRUE, owner["own.area"])
+
+
+#The shapefile is a bit messed up. Turn s2 back on for the newest version of sf 
+sf::sf_use_s2(TRUE)
+
+
+###Native land numbers
+natland<- env.v %>%
+  filter(ownership=="I")
+
+```
+
+
+### 5. ****TNC Southwest biotic communities
+
+```{r}
+#TNC sw biotic map
+swbio <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/TNC SW biotic communities/sw_biotic_communities.shp")
+swbio <-st_transform(swbio, crs=4326) #necessary step to get coords in the right alignment
+swbio.geo <- st_geometry(swbio)
+swbio$swbio.area <- st_area(swbio) #calculate area of swbio regions
+
+plot(st_geometry(swbio)) #this is the geologic map of NM
+
+#Are the coordinates aligning with map layer? 
+plot(swbio$geometry, col=alpha("white", .5), border="black", lwd=.5)
+plot(c2$geometry, add=T, col=alpha("cornflowerblue", 0.5), pch=16, cex=.1, alpha=.5)
+title("TNC southwest biotic communities with NM coords")
+
+#Join geologic and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, swbio["COMMUNITY"])  %>% st_join(left = TRUE, swbio["swbio.area"])
+
+
+###Basic Plotting
+swb1<-env.v%>%group_by(swbiocomm) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+head(swb1)
+
+ggplot(swb1, aes(x=reorder(swbiocomm, -count), y=count, fill=swbiocomm))+
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+### 6. Conservation and critical concern areas (MAYBE join multiple layers? Or choose one?)
+```{r}
+acec<- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/ACEC/ACEC.shp") %>% st_transform(crs=4326)
+blm<-st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/BLM_NM_WILDERNESS_BOUNDARIES/BLM_NM_WILDERNESS_BOUNDARIES.shp") %>% st_transform(crs=4326)
+nca<-st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/NLCS_NM_NCA/NLCS_Natural_Conservation_Areas.shp") %>% st_transform(crs=4326)
+study<-st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/NLCS_WILDERNESS_STUDY_AREAS/NLCS_Wilderness_Study_Areas.shp") %>% st_transform(crs=4326)
+
+#add column of protected lands area 
+acec$acec.area <- st_area(acec) #calculate area from geometries
+
+#First try plotting multiple layers at once to see how they line up. Pretty similar. 
+plot(st_geometry(aoi), col="lightgrey")
+plot(st_geometry(acec), col="cornflowerblue", add=TRUE)
+plot(st_geometry(nca), col="darkred", alpha=.2, add=TRUE)
+plot(st_geometry(study), col="orange", add=TRUE)
+plot(st_geometry(blm), col="gold", add=TRUE)
+
+
+
+#Keep individual values in each layer, but also create a new multipolygon layer that is the intersection of all four 'protected' land types
+p.multi<- st_union(acec, blm, nca, study, by_feature=TRUE) 
+plot(st_geometry(p.multi), col="purple") #I'm not sure this is actually right but I'm going to give this a go. 
+
+# try2<-st_difference(acec,st_union(st_combine(blm)))
+# plot(st_geometry(try2))
+
+#Are the coordinates aligning with map layer? 
+plot(p.multi$geometry, col=alpha("darkgray", .5), border="black", lwd=.5)
+plot(c2$geometry, add=T, col=alpha("purple4", 0.05), pch=16, cex=.2, alpha=.5)
+title("Map of concatenated protected land in NM")
+
+#Join protected areas and coords to extract values
+#env.v <- st_join(env.v, left = TRUE, acec["ACEC_NAME"])  #need to figure out a different way of creating a 'protected' or 'unprotected' column. If else statement probably
+env.v <- env.v %>% st_join(left = TRUE, acec["ACEC_NAME"])  %>% st_join(left = TRUE, acec["acec.area"])
+
+
+
+###BASIC PLOTS
+ggplot(p.multi)+
+  geom_sf(aes(fill=ACEC_NAME))+
+  geom_sf(data=aoi, aes(alpha=0.2))+
+  theme(legend.position = "r")
+
+protect1<-env.v%>%group_by(protection) %>%
+  dplyr::filter(!protection=="NA") %>%
+  summarise(count = n()) %>%
+  arrange(desc(count)) %>%
+  mutate_at("count", as.numeric)
+protect1
+
+ggplot(protect1)+
+  geom_sf(aes(col=protection))+
+  theme(legend.position = "r")
+
+ggplot(protect1, aes(x=reorder(protection, -count), y=count, fill=protection))+
+  geom_bar(stat="identity") +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90, size=4, vjust = 0.5, hjust=1))
+
+#save
+ggsave(filename = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/protectbarplot.png", width = 16, height = 10)
+
+
+```
+
+###Save df of env.v data (shapefiles)
+There will also be a raster version of this, I think. The key df here is 'env.v', which is a part of our original cleaned df (nmcol_resolved), then converted to sf format and joined with a bunch of environmental data in columns. The environmental data here is from vector layers (shapefiles). We will join this df with raster environmental data next. 
+```{r}
+env.v<-env.v %>% rename("countyFP" = "COUNTYFP",
+                         "physio" = "PROVINCE",
+                         "geologic" = "LABEL",
+                         "ecoreg4" = "US_L4NAME",
+                         "ecoreg3"= "US_L3NAME",
+                         "ownership" = "own",
+                         "swbiocomm" = "COMMUNITY",
+                         "protection" = "ACEC_NAME")
+
+class(env.v) #sf data frame 
+
+##save rda
+save(env.v, file="GBIFgeoDF_withenvironmental.RData")
+
+write.csv(env.v, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/environ_Dat_cl_Georef.csv")
+
+env.v<-read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/environ_Dat_cl.csv", header=TRUE)
+
+```
+
+
+##RASTER LAYERS
+
+Land Use/Land Cover data
+To get this layer, researchers should go to the MRLC website (https://www.mrlc.gov/viewer/) and download data for their region of interest. This may take up to a day to process. You will recieve a zipped file with raster(s). 
+
+
+
+###Climate data rasters
+For now I'll use prism to download PRISM data. This might not work... but I'm going to give in another go. Also...lower res might be good given the likelihood of bias in our occurrence data, too?
+
+```{r}
+library(prism)
+
+#Specify where raster layers will go
+options(prism.path="/Users/elizabethlombardi/Desktop/PRISM")
+#Set folder for where PRISM layer downloads go
+prism_set_dl_dir("/Users/elizabethlombardi/Desktop/PRISM") 
+
+#Download normals data for mean temperature in July
+#get_prism_normals(type = 'tmin', resolution = '4km', keepZip = TRUE)
+#precip<-get_prism_normals("ppt", resolution="4km", annual=TRUE)
+
+
+
+######CHOOSE WHICH PRISM DATA TO USE AND RE-RUN
+#unlink(paste0("/Users/elizabethlombardi/Dropbox/PRISM"), recursive = TRUE)  #if you need to remove the files 
+
+# Download the 30-year annual average precip and annual average temperature
+get_prism_normals("ppt", "4km", annual = TRUE, keepZip = FALSE)
+get_prism_normals("tmean", "4km", annual = TRUE, keepZip = FALSE)
+
+#Try annual PRISM averages from 2010 to 2022. 4km resolution
+get_prism_annual("ppt", years = 2010:2022, keepZip = FALSE)
+get_prism_annual("tmean", years = 2010:2022, keepZip = FALSE)
+######
+
+
+
+#check out the list of rasters I now have
+prism_archive_ls()
+prism_get_dl_dir()
+
+
+# Grab the prism data and compile the files into a raster stack (precip and temp)
+climate_data <- prism_archive_ls() %>%  
+  pd_stack(.)  
+
+# Extract project coordinates from raster stack
+climate_crs <- climate_data@crs@projargs
+
+
+# Convert collection locations to format and projection that matches prism data
+# make spatial
+env.v <- env.v %>% 
+  mutate_at(c("decimalLongitude", "decimalLatitude", "id"), as.numeric) %>%
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=CRS(climate_crs), remove=FALSE) %>%
+  as.data.frame(.) 
+
+coordinates(env.v) <- c('decimalLongitude', 'decimalLatitude')
+proj4string(env.v) <- CRS(climate_crs)
+
+
+# Extract the  extracted from the raster stack for those sites 
+prism.df <- data.frame(coordinates(env.v), 
+                  env.v$id,
+                  extract(climate_data, env.v))
+
+
+
+#rename columns with annual mean precip and temp values for each row
+prism.df <- prism.df %>% #includes provisional 2022 data
+#  mutate_at(c("env.coords.id"), as.numeric) %>%
+  rename("precip30yr" = "PRISM_ppt_30yr_normal_4kmM4_annual_bil") %>% 
+  rename("temp30yr" = "PRISM_tmean_30yr_normal_4kmM4_annual_bil") %>%
+  rename("prismLong" = "decimalLongitude") %>%
+  rename("prismLat" = "decimalLatitude")
+  
+
+#convert env.v back to dataframe
+env.v <- as.data.frame(env.v)
+
+
+# #keep them in simple feature format? NOPE this doesn't seem to work. It might...but it takes FOREVER and then breaks. 
+# try<- st_as_sf(env.v)
+# try2<-prism.df %>% st_as_sf(coords=c("prismLong", "prismLat"), crs=crs(env.v))
+# join <- try %>% st_join(left = TRUE, try2["precip30yr"])  %>% st_join(left = TRUE, try2["temp30yr"])
+
+
+#join prism.means with env.v using id columns
+env.v <- left_join(env.v, prism.df, by=(c("id"="env.v.id"))) #this joins PRISM 30-year normals to env.v dataframe, and also two new lat/long columns. Useful to make sure the abiotic data line up with the right collections. 
+
+all(env.v$decimalLatitude.x == env.v$decimalLatitude.y) #again, just make sure the new lat/long coords match the old ones, which confirms if the join worked
+dim(env.v) #243890    103
+
+
+#save new env.v 
+write.csv(env.v, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/environ_Dat_cl.csv")
+
+
+##save rda
+save(env.v, file="georefData_PRISM.RData")
+
+
+```
+
+
+###Elevation data rasters
+```{r}
+library(elevatr)
+
+load(file="script4_vectorPrism_Data.RData")
+
+prj_dd <- "EPSG:4326"
+
+df<-data.frame(env.v) %>%  #subsetting
+  dplyr::select(x="decimalLongitude", y="decimalLatitude", id="id") %>% 
+  mutate_if(is.character, as.numeric)
+
+df.sub <- df %>% slice(1:100) #subset to look at first 100 records
+
+elev<- get_elev_point(df, prj=prj_dd, src="epqs") #this step takes a pretty long time!!
+
+elev<-as.data.frame(elev)
+  
+
+
+##Try getting a NM raster of elevation data instead
+library(rgeoboundaries)
+library(sf)
+library(raster)
+library(ggplot2)
+library(viridis)
+
+library(rnaturalearth)
+library(rnaturalearthhires)
+
+nm_map <- get_stamenmap(
+  bbox = c(left = -109.5, bottom = 31, right = -102.8, top = 37.5), 
+  maptype = "toner-lite",
+  zoom = 7
+)
+
+
+
+swiss_bound <- rgeoboundaries::geoboundaries("Switzerland")
+elevation_data <- elevatr::get_elev_raster(locations = swiss_bound, z = 9, clip = "locations")
+
+
+elevation_data <- as.data.frame(elev, xy = TRUE)
+colnames(elevation_data)[3] <- "elevation"
+# remove rows of data frame with one or more NA's,using complete.cases
+elevation_data <- elevation_data[complete.cases(elevation_data), ]
+
+ggplot() +
+  geom_raster(data = elevation_data, aes(x = x, y = y, fill = elevation)) +
+  #geom_sf(data = df.sub, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_viridis_c() +
+  labs(title = "Elevation", x = "Longitude", y = "Latitude", fill = "Elevation (meters)")
+
+```
+
+
+
+##NM shaded relief 
+Downloaded from the internet (open source) and uploading a .tif file here 
+
+```{r}
+library(raster)
+library(terra)
+
+nmSr <- raster::raster("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/nm_relief_color_tif/nm_relief_color.tif")
+
+nmSr <- terra::rast("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/nm_relief_color_tif/nm_relief_color.tif")
+nmSr <- project(nmSr, prj_dd)
+plot(nmSr)
+nlyr(nmSr) #three layers in the file
+res(nmSr)
+
+```
+
+###Try again with a raster of NM download and then extract the data
+```{r}
+library(rasterVis)
+library(raster)
+library(rgl)
+library(rgdal)
+library(elevatr)
+
+
+elevation <- get_elev_raster(aoi, z = 9)
+plot(elevation, main="This the downloaded DEM [meters]")
+plot(aoi$geometry, add=TRUE)
+
+#crop to NM boundary
+elevNM_crop = crop(elevation, aoi)
+plot(elevNM_crop, main="Cropped Digital elevation model")
+plot(aoi$geometry, add=TRUE)
+plot()
+
+elevNM_crop
+
+
+#reproject
+# Project Raster
+# to have control,  we create one raster object
+# using projectExtent (no values are transferred)
+pr3 <- projectExtent(elevNM_crop, prj_dd)
+# Adjust the cell size 
+res(pr3) <- 100
+# now project
+rep_elev <- projectRaster(elevNM_crop, prj_dd)
+hist(elevNM_crop)
+
+# Grab the elevation data and compile the files into a raster stack
+elev_data <- pd_stack(.)  
+
+# Extract project coordinates from raster stack
+elev_crs <- elevNM_crop@crs@projargs
+
+
+# Convert collection locations to format and projection that matches prism data
+# make spatial
+env.v <- env.v %>% 
+  mutate(rowID=row_number())%>%
+  mutate_at(c("decimalLongitude", "decimalLatitude", "rowID"), as.numeric) %>%
+  filter(!decimalLongitude=="", !decimalLatitude=="") %>%
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=CRS(elev_crs), remove=FALSE) %>%
+  as.data.frame(.) 
+dim(env.v)
+
+
+coordinates(env.v) <- c('decimalLongitude', 'decimalLatitude')
+proj4string(env.v) <- CRS(elev_crs)
+
+
+# Extract the  extracted from the raster stack for those sites 
+elev.df <- data.frame(coordinates(env.v), 
+                  env.v$rowID,
+                  extract(elevNM_crop, env.v))
+
+#rename columns 
+elev.df <- elev.df %>% 
+  rename("rowID" = "env.v.rowID") %>%
+  rename("elevation" = "extract.elevNM_crop..env.v.") %>%
+  rename("elevLat"="decimalLongitude")%>%
+  rename("elevLong"="decimalLatitude")
+  
+
+#convert env.v back to dataframe
+env.v <- as.data.frame(env.v)
+
+
+#join elev.df with env.v using id columns
+env.v <- left_join(env.v, elev.df, by="rowID") #this joins the elevation dataframe to the env.v main dataframe. Why did this increase the number of rows?
+
+all(env.v$decimalLatitude.x == env.v$elevLat) #again, just make sure the new lat/long coords match the old ones, which confirms if the join worked
+dim(env.v) 
+
+
+#save new env.v 
+write.csv(env.v, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Full_Dataframe_georeffed.csv")
+
+
+##save rda
+save(env.v, file="georefEnviroFull.RData")
+
+
+
+```
+
+
+
+
+
+#Joining environmental dataframes
+Specifically, I'm wondering if and how to join different layers with count information together. There isn't a unique ID in many of these layers, unless we can use geometry, for example? Assuming there aren't multiple collections that have exactly the same geometry/coords?
+
+```{r}
+nm.eco.df<-as.data.frame(nm.eco)
+try<-st_join(nm.eco, c2) #Nope
+```
+
+

@@ -1,0 +1,264 @@
+---
+title: "3. Taxonomic Harmonization"
+author: "emlombardi"
+date: "2023-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+load(file="script2_output.RData")
+
+```
+
+## Taxonomic Harmonization
+
+In this document, I will harmonize the list of species-level taxonomic data from script 2's cleaned dataframe `dat_cl`. There are many, many different R packages that may be useful for this task (see [Grenié et al 2023](https://doi.org/10.1111/2041-210X.13802)). We have elected to use FILL THIS IN WHEN I FIGURE IT OUT. 
+
+```{r packages}
+
+library(tidyverse)
+library(magrittr)
+library(rgnparser)
+library(rgbif)
+library(lcvplants)
+library(rotl)
+library(stringr)
+#library(rfishbase)
+#library(rebird)
+library(parallel)
+library(TNRS)
+
+
+```
+
+##Hannah Marx's harmonization functions
+Use these to tidy things up a bit. Note that I decided to run a parseing step in script 1 so the list of species names `spp.parsed` should already be fairly tidy.
+```{r}
+#### Get Just Genus_species...(remove infraspecific identifiers) 
+#df = the dataframe you would like to fix, species in rows, but names to change must also be in a column that is not 0
+#colnum = the number of the column in the dataframe with the taxonomy you want to fix
+#spliton = the punctuation separating names in taxonomy, e.g. "_" 
+#sepas = the separation used for the format in the taxonomic lookup, e.g. " "
+get.genus.species <- function(df, colnum, spliton, sepas){
+  split <- strsplit(as.character(df[,colnum]), split=spliton, fixed=TRUE)
+  genus.name <- sapply(split, "[", 1L) #get just the genus_species_var...
+  species.name <- sapply(split, "[", 2L) #get just the species_var...
+  combinedname <- paste(genus.name, species.name, sep=sepas) #get just genus_species
+  return(combinedname) #30839
+}
+
+#### Add column with taxonomy to use from specified reference source
+#df = the dataframe you would like to fix, species in rows, but names to change must also be in a column that is not 0
+#colnum = the number of the column in the dataframe with the taxonomy you want to fix
+#spliton = the punctuation separating names in taxonomy, e.g. "_" 
+#sepas = the separation used for the format in the taxonomic lookup, e.g. " "
+add.taxized.column <- function(df, colnum, spliton, sepas){
+  split <- strsplit(as.character(df[,colnum]), split=spliton, fixed=TRUE)
+  genus.name <- sapply(split, "[", 1L) #get just the genus_species_var...
+  species.name <- sapply(split, "[", 2L) #get just the species_var...
+  ### Remove punctuation 
+  combinedname <- paste(genus.name, species.name, sep=sepas) #get just genus_species
+  combinedname <- gsub(combinedname, pattern = "\\.", replacement = sepas) 
+  combinedname <- gsub(combinedname, pattern = "-", replacement = sepas)
+  combinedname <- gsub(combinedname, pattern = " L ,$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = " x$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = " F.H.$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = ",$", replacement = "") 
+  df.nex <- as.data.frame(cbind(combinedname, df))
+  df.nex[] <- lapply(df.nex, as.character)
+  ### Make sure taxonomic names are spelled correctly, and are up to date
+  ## Make a taxonomy lookup list using iPlant TNRS database
+  tmp <-  tnrs_match_names(names = df.nex[!duplicated(df.nex[1]),1]) #
+  #head(tmp)
+  tmp.rm <- tmp %>% filter(!is.na(unique_name)) #just those with accepted name not blank
+  tmp.rm[,1] <- str_to_title(tmp.rm[,1])
+  #write.csv(tmp, file="Sp.List.tmp")
+  for (i in 1:nrow(df.nex)){
+    #i=16# Euphorbia dulcis
+    if (as.character(df.nex[i, 1]) %in% tmp.rm[[1]]){ #if the sp is in the taxonomy lookup list
+      if (tmp.rm[tmp.rm[1] == as.character(df.nex[i,1]),1] == tmp.rm[tmp.rm[1] == as.character(df.nex[i,1]),2]){
+        next
+      } else {
+        df.nex[i,1] <- tmp.rm[tmp.rm[1] == df.nex[i,1],2]
+      }
+    }
+  }
+  
+  taxized <- get.genus.species(df = df.nex, colnum = 1, spliton = " ", sepas = " ")
+  
+  df.nex.tmp2 <- cbind(taxized, df.nex)
+  #head(df.nex)
+  #df.nex[16,]
+  #dim(df.nex)
+  #write.csv(df.nex, file="Sp.List.tmp2.csv")
+  return(df.nex.tmp2) #30839
+}
+
+#### Resolve taxonomy on tips of phylogeny from specified reference source
+#phy=phy.tmp
+#spliton = "_"
+#sepas = " "
+#taxonomy.source = "iPlant_TNRS"
+add.taxized.tips <- function(phy, spliton, sepas, taxonomy.source){
+  split <- strsplit(as.character(phy$tip.label), split=spliton, fixed=TRUE)
+  genus.name <- sapply(split, "[", 1L) #get just the genus_species_var...
+  species.name <- sapply(split, "[", 2L) #get just the species_var...
+  ### Remove punctuation 
+  combinedname <- paste(genus.name, species.name, sep=sepas) #get just genus_species
+  combinedname <- gsub(combinedname, pattern = "\\.", replacement = sepas) 
+  combinedname <- gsub(combinedname, pattern = "-", replacement = sepas)
+  combinedname <- gsub(combinedname, pattern = " L ,$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = " x$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = " F.H.$", replacement = "") 
+  combinedname <- gsub(combinedname, pattern = ",$", replacement = "") 
+  tab <- as.data.frame(cbind(tips = phy$tip.label, combinedname))
+  #head(tab)
+  ### Make sure taxonomic names are spelled correctly, and are up to date
+  ## Make a taxonomy lookup list using iPlant TNRS database
+  tmp <-  iPlant(query = tab[,2], source = taxonomy.source)[ , -c(5:7)] #accepted name, blank = no opinion; *tnrs* depreciated
+  tmp.rm <- na.omit(tmp[tmp[2]!= "",]) #just those with accepted name not blank
+  tmp.rm$submittedname <- gsub(tmp.rm$submittedname, pattern = " ", replacement = "_") 
+  tmp.rm$acceptedname <- gsub(tmp.rm$acceptedname, pattern = " ", replacement = "_") 
+  tab$combinedname <- gsub(tab$combinedname, pattern = " ", replacement = "_") 
+  tmp.merge <- merge(tab, tmp.rm, by.x= 2, by.y=1)
+  #head(tmp.merge)
+  #dim(tmp.merge)
+  
+  for (i in 1:length(phy$tip.label)){
+    if (phy$tip.label[i] %in% tmp.merge$tips){
+      if (!phy$tip.label[i] %in% tmp.merge$acceptedname){
+        x <- tmp.merge[which(tmp.merge$tips==phy$tip.label[i]), "tips"]
+        y <- tmp.merge[which(tmp.merge$tips==phy$tip.label[i]), "acceptedname"]
+        print(paste(i, "input =", x, ", accepted =", y))
+        phy$tip.label[i] <- y
+        
+      }  
+    }
+  }
+
+  return(phy) 
+}
+
+
+
+```
+
+##Tidy things up even more...maybe not really necessary?
+```{r data}
+
+head(dat_cl)
+dim(dat_cl) # 263296 
+
+dat_cl$spp.parsed
+
+# select genus + species: 
+split <- strsplit(as.character(dat_cl$spp.parsed), split=" ", fixed=TRUE)
+ids.toremove <- sapply(split, function(i) length(i) < 2) #remove anything without both genus and species information (1,453 occurrences)
+split <- split[!ids.toremove]
+genus.name <- sapply(split, "[", 1L) #get just the genus_species_var...
+species.name <- sapply(split, "[", 2L) #get just the species_var...
+
+#how many unique taxa are there?
+dat_taxa <- unique(paste(genus.name, species.name, sep=" ")) #get unique genus_species = 8055 taxa
+dat_taxa <- paste(genus.name, species.name, sep=" ")
+length(dat_taxa) #258791 included (so all of the taxa)
+
+
+#Look at the breakdown of flags based on ROTL 
+# Rotl: Match taxonomic names to the Open Tree Taxonomy.
+#resolved_names_nmcheck <- tnrs_match_names(nmcheck_taxa)
+resolved_names_dat <- tnrs_match_names(dat_taxa)
+#dim(resolved_names_nmcheck) #3971; one duplicated
+dim(resolved_names_dat) # 8055
+
+```
+
+#1. Harmonize using ROTL (basically from Hannah)
+Basic data exploration and cleaning steps. Ultimately this provides insight regarding any issues that might be present in the data and adds two columns. The taxized column is the taxonomically harmonized (using rotl) version of the spp.parsed column.
+```{r pressure, echo=FALSE}
+#remove rows that don't have genus and species information 
+dat_cl[c('spp.temp', 'gen.temp')] <- str_split_fixed(dat_cl$spp.parsed, " ", 2)
+
+dat_cl <- dat_cl %>%
+  filter(!gen.temp == "") %>% #removes rows without specific epithet info
+  select(-spp.temp, -gen.temp) #deletes these columns because they were temporary
+
+dim(dat_cl) #258791 records retained (have both genus and specific epithet). 4,505 records had only genus info.
+
+
+
+
+# add Rotl taxonomy resolution column
+#nmcheck_resolved <- add.taxized.column(df = nmcheck, colnum = 1, spliton = " ", sepas = "_")
+dat_cl<-dat_cl%>% select(!parsed) #take out the parsed nested df column because it was breaking the next script.
+dat_cl <- add.taxized.column(df = dat_cl, colnum = 35, spliton = " ", sepas = "_") #adding taxized column based on spp.parsed data
+
+
+# summarize counts of collections for resolved name ($taxized) 
+dim(dat_cl) 
+dat_cl %>% count(taxized, source, sort = T)
+dat_cl_count <- dat_cl %>% count(taxized, sort = T) #5,867 unique species 
+
+dat_year<-dat_cl %>% count(year, sort=T)
+
+
+#save just in case
+write.csv(dat_cl, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/harmonized_datcl.csv")
+
+dat_cl<-read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/harmonized_datcl.csv", header=TRUE)
+dim(dat_cl) #258791 when read from above
+
+```
+
+#2. Get higher taxonomic ranks 
+We need to use the taxonomically harmonized list of species to also add updated columns for higher taxonomic groups. It's a large dataset so I'll do this with TNRS. 
+
+###TNRS higher taxonomy cleaning
+This code works, assuming we accept that TNRS is sufficient for what we want to do. I think we should move forward with this.
+
+```{r}
+#subsample to make sure it's working
+dat_sub <- dat_cl %>% 
+  slice_sample(n=1000, replace=TRUE) #remove this later
+
+dat_cl<-env.v
+spp.list <- unique(dat_cl$spp.parsed) #just a list of unique species names
+dat_tax <-TNRS(taxonomic_names = spp.list) #10,609 taxonomic groups
+dat_cl_full <- dplyr::left_join(dat_cl, dat_tax, by=c('spp.parsed'='Name_submitted'), keep=TRUE) #join higher tax with original cleaned data frame
+
+
+
+write.csv(dat_cl_full, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/cleaned_NMcollections.csv")
+
+#save full working environment
+save(dat_cl_full, file="script3secondtry_output.RData")
+
+
+```
+
+### taxizedb higher taxonomy cleaning (alternative to above)
+I also tried with taxizedb (using NCBI database); below. This produces a huge recursive list, but maybe it's still useful?
+Try with taxizedb (downloads NCBI database locally...I think)
+```{r}
+#install.packages("taxizedb")
+library(taxizedb)
+library(dplyr)
+library(tidyr)
+
+
+spp.unique <- dat_cl %>% dplyr::filter(dat_cl$spp.parsed) %>% na.omit()
+spp.unique=dat_cl$spp.parsed[!is.na(dat_cl$spp.parsed)] 
+
+ids <- name2taxid(c(spp.unique), out_type="summary") #failing to connect to the ncbi port and timing out...
+class<-classification(ids$id) #dataframe of lists
+
+#flatten and pull out information from this dataframe into the original dataframe. I could join by 
+
+
+
+try <- PAlist %>%
+  separate()
+
+```
+
+

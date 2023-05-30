@@ -1,0 +1,126 @@
+---
+title: "5. Descriptive statistics"
+author: "emlombardi"
+date: "2023-02-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Script summary:
+
+This file will describe your botanical database in terms of summary statistics. No additional layers or variables outside of what is present in your occurrence dataframe are required. 
+
+##Load data and libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(RColorBrewer)
+
+dat <- read.csv("/Users/elizabethlombardi/Dropbox/unmGapPatterns/masterDF_cleaned.csv")
+```
+
+#Where are the specimens?
+
+```{r}
+
+#table summarizing insitutions holding records
+i<- dat %>% 
+  group_by(institutionCode) %>%
+  tally(sort=T)
+i
+
+#table summarizing collection codes. Not really very helpful. 
+cc <- dat %>% 
+  group_by(collectionCode) %>%
+  tally(sort=T)
+cc
+
+
+```
+##Text mining of the locality column
+I'm not really sure if it's worthwhile, but I'm going to run some basic text analysis on the localities column, which is where folks have described the environment from which they collected the plant specimen. This could certainly done more rigorously, but we're going to just do a first pass following along with this tutorial:
+https://hutsons-hacks.info/text-mining-term-frequency-analysis-and-word-cloud-creation-in-r
+
+```{r}
+#libraries
+install_or_load_pack <- function(pack){
+   create.pkg <- pack[!(pack %in% installed.packages()[, "Package"])]
+    if (length(create.pkg))
+     install.packages(create.pkg, dependencies = TRUE)
+     sapply(pack, require, character.only = TRUE)
+}
+packages <- c("ggplot2",  "data.table", "wordcloud", "tm", "wordcloud2","scales", "tidytext", "devtools", "twitteR", "caret", "magrittr", "RColorBrewer", "tidytext", "ggdendro","tidyr", "topicmodels", "SnowballC", "gtools")
+install_or_load_pack(packages)
+
+
+#create textual corpus
+corpus_tm <- function(x){
+   corpus_tm <- Corpus(VectorSource(x))
+}
+
+#create our specific corpus to be analyzed
+corp.loc <- corpus_tm(dat$locality)
+class(corp.loc)
+head(corp.loc)
+
+#clean the locality corpus
+clean_corpus <- function(corpus_to_use){
+corpus_to_use %>%
+   tm_map(removePunctuation) %>%
+   tm_map(stripWhitespace) %>%
+   tm_map(content_transformer(function(x) iconv(x, to='UTF-8', sub='byte'))) %>%
+   tm_map(removeNumbers) %>%
+   tm_map(removeWords, stopwords("en")) %>%
+   tm_map(content_transformer(tolower)) %>%
+   tm_map(removeWords, c("etc","ie", "eg", stopwords("english")))
+}
+
+locCl<-clean_corpus(corp.loc)
+
+#Create TermDcoumentMatrix for term frequencies
+find_freq_terms_fun <- function(corpus_in){
+doc_term_mat <- TermDocumentMatrix(corpus_in)
+freq_terms <- findFreqTerms(doc_term_mat)[1:max(doc_term_mat$nrow)]
+terms_grouped <- doc_term_mat[freq_terms,] %>%
+    as.matrix() %>%
+    rowSums() %>%
+    data.frame(Term=freq_terms, Frequency = .) %>%
+    arrange(desc(Frequency)) %>%
+    mutate(prop_term_to_total_terms=Frequency/nrow(.))
+return(data.frame(terms_grouped))
+}
+
+locFreq<- data.frame(find_freq_terms_fun(locCl))
+locFreq #this is the table of terms that occur frequently in the locality data. Not really sure it's THAT useful. 
+
+
+#Word cloud for funsies
+wordcloud2(locFreq[,1:2], shape="pentagon",
+				      color="random-dark")
+
+```
+
+#When were the plants collected?
+Basic temporal trends in the records database
+
+```{r}
+yrs<- dat %>% 
+  group_by(year) %>%
+  tally(sort=T)
+yrs
+
+
+#ordinal days
+d<- dat %>% 
+  group_by(date.ordinal) %>%
+  filter(!date.ordinal=="") %>%
+  tally(sort=T)
+d
+
+
+
+```
+

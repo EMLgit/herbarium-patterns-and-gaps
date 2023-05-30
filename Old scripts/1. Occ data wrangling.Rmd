@@ -1,0 +1,358 @@
+---
+title: "occurrence data wrangling"
+author: "emlombardi"
+date: "2022-09-15"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## Description of code
+
+This script will: 1. load both GBIF and SEINet raw datasets 2. Clean
+SEINet data so that we have the same spatial extent for both dataset
+(the WKT polygon for NM only). Note: we will keep record of the coords
+that fall outside of NM but have stateProvince="New Mexico" (i.e.
+specimen that need to be re-georeferenced) 3. Add a column to each
+separate dataset identifying the source as either GBIF or SEINet 4. Bind
+the two (rbind) and sort/remove duplicates so that we have a fully
+concatenated master dataset without duplicates. 5. Clean the masterdata
+set as best as we can.
+
+```{r load libraries}
+
+library(dplyr) 
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(geojson)
+library(geojsonsf)
+library(sf)
+library(rgeos)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggmap)
+library(ggpubr)
+library(mapview)
+library(knitr)
+library(rmarkdown)
+library(rgnparser)
+
+
+```
+
+#GBIF data: Lizzie downloaded GBIF data on September 15th, 2022. To grab
+only those coordinates that fall in NM, I used a simplified WKT geojson
+polygon boundary downloaded from New Mexico Water Data. There are
+178,919 preserved specimen from New Mexico with coordinates in GBIF at
+the time of this download.
+
+#SEINet data: SEINet workflow: Data from SEINet were downloaded on
+September 6th, 2022. Katie Pearson sent the full SEINet dataset. We are
+using only the georeferenced data from SEINet
+("AllNMwithgeodatafromseinet.csv"), and will filter these data to
+separate those that fall within the same polygon used for GBIF download.
+Lizzie will also make a separate file to collect all data for the
+specimen in SEINet that have coordinates outside of the polygon, but
+have a stateProvince locality from New Mexico.
+
+##UPDATE: 
+Lizzie downloaded new versions of both SEINet and GBIF on February 22, 2023 and re-ran all of the cleaning steps
+
+```{r load data}
+
+#GBIF
+#gbif <- read.delim("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/GBIF data/gbif_NMspecimen_wktpolygon.csv") 
+gbif <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/GBIF data/gbif_NMspecimen_wktpolygon_FEB2023.csv", header=TRUE) #190597 occurrences; February 2023 download from GBIF
+
+
+
+#SEINet
+#seinet1 <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet data/AllNMwithgeodatafromseinet.csv")
+seinet <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet data/seinet_specimen_georef_FEB2023.csv", header=TRUE)
+dim(seinet) #check size before cleaning. 295,411 rows
+
+#read in the wkt polygon as the area of interest
+wkt<-readWKT("POLYGON((-105.88616 32.00197,-104.53205 32.00031,-104.52698 31.99688,-104.50208 31.99634,-104.46988 31.99812,-104.46379 32.00012,-103.06442 32.00052,-103.06464 33.00011,-103.04348 34.02044,-103.04326 35.12506,-103.04082 36.00004,-103.04192 36.50035,-103.00229 36.50089,-103.0022 37.0001,-103.62551 36.99863,-104.33883 36.99354,-104.62456 36.99438,-105.02923 36.99273,-105.1208 36.99543,-105.44725 36.99602,-106.8698 36.99242,-106.87729 37.00014,-109.04522 36.99908,-109.04679 35.38034,-109.04536 34.78539,-109.05004 31.33224,-108.20857 31.3334,-108.20839 31.7836,-106.52824 31.78315,-106.5274 31.79001,-106.53279 31.79244,-106.536 31.79851,-106.54416 31.80347,-106.54714 31.8073,-106.56295 31.81111,-106.56341 31.81274,-106.56647 31.81343,-106.57094 31.81021,-106.57724 31.81041,-106.58906 31.82271,-106.59382 31.8249,-106.60281 31.82502,-106.6053 31.82772,-106.60194 31.8396,-106.60204 31.84441,-106.60584 31.84631,-106.61479 31.84641,-106.62577 31.85617,-106.62817 31.86112,-106.63592 31.86624,-106.63487 31.87448,-106.62919 31.8837,-106.63392 31.88918,-106.64529 31.89486,-106.64548 31.89867,-106.64084 31.9046,-106.63367 31.90979,-106.62595 31.91223,-106.61875 31.9178,-106.61615 31.9173,-106.61185 31.92,-106.62393 31.92533,-106.62865 31.92361,-106.62974 31.92657,-106.62534 31.93003,-106.62216 31.93601,-106.62366 31.94551,-106.61525 31.94897,-106.61432 31.95162,-106.61437 31.95599,-106.61771 31.95601,-106.62282 31.95289,-106.62512 31.95453,-106.6243 31.96106,-106.61937 31.96478,-106.61957 31.97158,-106.62319 31.97292,-106.62652 31.97068,-106.6301 31.97126,-106.63819 31.97682,-106.63954 31.98034,-106.6365 31.98571,-106.63119 31.98981,-106.62357 31.991,-106.61945 31.99474,-106.61849 32.0005,-106.12553 32.00253,-105.88616 32.00197))", p4s="+proj=longlat +datum=WGS84")
+wkt.sf<-st_as_sf(wkt, crs=st_crs(4326))
+nm.geometry<-st_geometry(wkt.sf) #pull out the geometry from the polygon object (no attributes)
+
+
+#Area of interest in spatial feature format, projected correctly
+aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
+class(aoi)
+plot(aoi$geometry) #sf boundary of NM state
+
+
+```
+
+#Remove duplicates from within GBIF dataset
+Like with the SEINet data below, I need to identify and remove any duplicate records that exist in the GBIF dataset. It's possible that multiple institutions push the same individual plant to GBIF, causing replication. 
+
+```{r clean GBIF}
+dim(gbif) #the number of GBIF records you're starting with (before cleaning)
+
+###Create new column, 'concat.date',  with standardized collection date format
+gbif<-gbif %>% unite("concat.date", day:year, na.rm=FALSE, remove=FALSE) #Adds a new column with concatenated day_month_year so it's standardized across all rows
+
+#Now remove any duplicates within GBIF based recordNumber, scientificName, concat.date
+gbif <-gbif %>% distinct(recordNumber, scientificName, concat.date, .keep_all=TRUE) #remove 16973 duplicate records
+dim(gbif) #check number of occs after dups removed. 173,624 records now (feb2023)
+
+#Try parsing species names using rgnparser
+gbif <- gbif %>% mutate(parsed = gn_parse_tidy(gbif$scientificName)) #keeps all records; just runs species list through taxonomic parsing package and adds a new column that is actually a tibble
+
+
+###SAVE THE FINAL GBIF DF 
+write.csv(gbif, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/GBIF data/gbif_cleaned.csv")
+
+
+```
+
+
+#SEINet data clip 
+
+The full dataset from SEINet needs to be clipped to
+the same polygon as the GBIF dataset. To do this, I'll map the seinet
+data, then split into two data frames: one inside the area of interest,
+and one outside of it.
+
+After that, I'm going to remove any duplicates that exist within the SEINet system (e.g. a single digitized specimen is held by multiple institutions and pushed to SEINet multiple times). I'll use recordNumber+scientificName+concat.date to identify and remove duplicates. 
+
+```{r seinet occurrence cleaning}
+#first create a map of the coordinates from SEINet. Note that converting to SF object cannot happen if missing coords.
+
+
+####REMOVE?
+#coords<-as.data.frame(seinet %>% dplyr::select(id, decimalLongitude, decimalLatitude)) 
+#coords <- coords %>% filter(!decimalLongitude =="" | !decimalLatitude=="")
+#dim(coords) #295393 coordinates with lat and long. Lost 18 records (had incomplete coordinates) from SEINet. 
+
+dim(seinet)
+seinet <- seinet %>% drop_na(c("decimalLongitude", "decimalLatitude")) #remove 18 rows that don't have complete coordinates 
+
+#convert to sf object
+seinet.sf <- st_as_sf(x=seinet, 
+                   coords = c("decimalLongitude", "decimalLatitude"),
+                   crs= "+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+
+plot(seinet.sf$geometry)
+
+##grab the problematic records based on NM state extent
+flags<-seinet.sf[geometry, ,op=st_disjoint] #this is the data set the Harpo wanted to see the outliers geographically. 1825 flagged coords
+plot(flags$geometry)
+
+#Save the sf flagged data as .csv file
+st_write(flags, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet data/seinet_flagged_occurrences_FEB2023.csv", append=FALSE, layer_options = "GEOMETRY=AS_XY") #1825 flagged records
+
+
+##keep only the SEINet coords that fall within the NM state boundary
+seinet.sf<-seinet.sf[nm.geometry, ] #this is the SEINet dataset clipped to the NM state boundary
+
+
+### REMOVE DUPLICATES from within SEINet itself ###
+dim(seinet.sf) #293568 records
+class(seinet.sf)
+
+#Create new column with standardized collection date format
+seinet.sf<-seinet.sf%>%unite("concat.date", day:year, na.rm=FALSE, remove=FALSE) #Adds a new column with concatenated day_month_year so it's standardized across all rows
+
+#Now remove any duplicates withing SEINet
+seinet.sf <- seinet.sf %>% distinct(recordNumber, scientificName, concat.date, .keep_all=TRUE) #remove dups (N=33,752 in Feb 2023)
+dim(seinet.sf) #259816 distinct records
+
+
+
+###SAVE THE FINAL SEINET DF. This take a long time to finish.
+st_write(seinet.sf, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet data/seinet_cleaned.csv", layer_options = "GEOMETRY=AS_XY")
+
+```
+
+## Rename and add source column
+
+Both gbif and seinet must have the same names in order to eventually
+rbind() them together. The first task will be to select the columns from
+each that we want to keep (the same ones for each). Then rename the
+columns to the same things.
+
+After that, add a column to each dataset indicating source as either
+gbif or seinet.
+
+```{r pressure, echo=FALSE}
+#gbif
+cols.gbif<-names(gbif) #column names into list
+#gbif<-gbif%>%dplyr::select(gbifID, datasetKey, occurrenceID, institutionCode, publisher, kingdom, plylum, class, order, family, genus, species, infraspecificEpithet, scientificName, verbatimScientificName, locality, stateProvince, occurrenceStatus, publishingOriginKey, taxonRank, datasetKey, elevation, decimalLongitude, decimalLatitude, 
+
+####RENAME GBIF columns: gbifID->id,#####
+
+#rename gbifID column to ID to match SEINet
+gbif<-gbif%>%
+  rename("id"="gbifID") %>%
+  rename("verbatimElevation" = "elevation") #because these are column names in SEINet
+
+cols.gbif<-names(gbif) 
+
+
+
+#####RENAME SEINet columns: latitude and longitude if necessary. Note that we're going back to calling it 'seinet' rather than 'seinet.sf'
+
+#seinet. YOU NEED TO RE-UPLOAD THE CSV. Maybe could also convert sf to table format again. 
+seinet <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet data/seinet_cleaned.csv")
+
+#rename lat/long coordinate columns to match GBIF 
+seinet<-seinet %>% 
+  rename("decimalLongitude"="X", "decimalLatitude"="Y") 
+#%>%
+  #rename("verbatimScientificName" = "scientificName") #because GBIF's comparable col is named differently. NO LONGER NEEDED IF PARSING WORKED
+
+#add parsed species column 
+seinet <- seinet %>% mutate(parsed = gn_parse_tidy(seinet$scientificName)) #keeps all records; just runs species list through taxonomic parsing package
+
+#column names into list. Note that the coords are now X and Y rather than decimalLongitude or decimalLatitude
+cols.seinet<-names(seinet)
+
+##Different way to setup dataframes for rbinding
+#subset original dataframes to include only those columns that are in both. 
+cols.intersect<-intersect(cols.gbif, cols.seinet) #intersection of both datasets
+
+# subset the initial data frames. 
+gbif <- gbif[,cols.intersect]
+seinet <- seinet[,cols.intersect]
+
+#check
+names(gbif)
+names(seinet)
+
+```
+
+```{r}
+###Add the source column to each
+gbif$source<-c("gbif")
+seinet$source<-c("seinet")
+
+
+
+###Just to see what's left out:
+cols.unique1<-setdiff(cols.gbif, cols.seinet) #columns only in gbif data frame
+cols.unique2<-setdiff(cols.seinet, cols.gbif) #columns only in seinet data frame
+
+```
+
+#Figure out which column has shared IDs To remove duplicates, I need to
+know which of the columns have the same values between GBIF and SEINet.
+There are possibly some issues because of missing values, etc.
+
+### SKIP this chunk?
+```{r}
+#You need to read the raw data in to compare ID and gbifID, so I'm leaving those columns out for now
+id1<-gbif%>%dplyr::select(occurrenceID, catalogNumber, institutionCode) #Gbif identification candidates into a single place so I can figure out missing values, etc. 
+id2<-seinet%>%dplyr::select(occurrenceID, catalogNumber, institutionCode) #seinet identification candidates 
+
+id1.na<-gbif%>%summarise_all(~sum(is.na(.))) #number of NA values by column in GBIF
+id2.na<-seinet%>%summarise_all(~sum(is.na(.))) #number of NA values by column in SEINet
+#apparently, there are no empty cells in some of the columns that hold id values. this is not true, though. There are empty cells in every column that might be useful for finding duplicates. 
+
+```
+
+At this point, I've created new data frames from GBIF and SEINet, subset
+them so that I only have columns that are shared between both and have
+added a column to indicate the original source.
+
+The next task is to combine the two dataframes into a master dataframe
+that has no duplicates. To do this, I'll first rbind() them together
+into `master.df`. Then I'll remove duplicates.
+
+#Merge and Remove duplicates
+
+
+```{r merge dataframes and remove duplicates}
+#bind the dataframes
+dat<-rbind(gbif, seinet) 
+dim(dat) #433440 when combined (feb2023)
+
+
+#remove duplicates
+dat.df1<-dat %>% distinct(catalogNumber, institutionCode, .keep_all=TRUE)  #This needs to be checked on a map, etc. for duplicates. 
+dat.df2 <- dat %>% distinct(verbatimScientificName, catalogNumber, institutionCode, .keep_all=TRUE)
+dat.df4 <- dat %>% distinct(concat.date, verbatimScientificName, .keep_all=TRUE) #super similar to SEINet
+dat.df <- dat %>% distinct(catalogNumber, .keep_all=TRUE) #I'm using this one for now. 264,744 records 
+
+###Hoist the dat_cl$parsed$canonicalsimple column from the dataframe in parsed column into main datafarme
+dat.df <- dat.df %>% mutate(dat.df$parsed[5]) %>%  rename("spp.parsed" = "canonicalsimple")
+
+
+
+#####MAPPING TO CHECK#####
+
+#check on a map
+#Basic NM map
+nm_map <- get_stamenmap(
+  bbox = c(left = -109.5, bottom = 31, right = -102.8, top = 37.5), 
+  maptype = "toner-lite",
+  zoom = 7
+)
+
+
+#Basic NM map
+nm_map <- get_stamenmap(
+  bbox = c(left = -109.5, bottom = 31, right = -102.8, top = 37.5), 
+  maptype = "toner-lite",
+  zoom = 7
+)
+
+#colored by source
+m2<-ggmap(nm_map) + #check visually, and I've added the original seinet/gbif data on top to make sure we're not losing anything major
+  geom_point(data = dat.df, 
+             aes(x = decimalLongitude, y = decimalLatitude, color=source),
+             size = 1, alpha=0.3) +
+  scale_color_manual(values=c("cornflowerblue", "coral3"))
+
+fig<-ggarrange(m1, m2, labels=c("All merged coordinates", "All merged coords by color"), ncol=2, nrow=1)
+fig
+
+
+
+#Looks good. Save the master.df dataframe. This will be used for coordinate cleaning in the next script. 
+write.csv(dat.df, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/datDF_merged_script1.csv", row.names=TRUE)
+
+```
+
+###Check the way that we're removing duplicates more closely
+
+```{r duplicates}
+dups<-dat.df[duplicated(dat.df[,c("catalogNumber","institutionCode")]),] #CHECK THIS. should be the herbs not pushing
+
+write.csv(dups, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/duplicate_occurrences.csv", row.names=TRUE)
+```
+
+###Figure out which herbaria aren't pushing to GBIF There are probably a
+few patterns in who is versus is not pushing occurrence data to the GBIF
+set. Harpo would like to have this information, so I think it's pretty
+straightforward to figure out.
+
+```{r}
+install.packages("arsenal")
+library(arsenal)
+
+gbif.herbs<-c(gbif$institutionCode)
+seinet.herbs<-c(seinet$institutionCode)
+
+inclHerbs<-as.data.frame(intersect(gbif$institutionCode, seinet$institutionCode)) #institution codes that are in both datasets
+
+missHerbs<-as.data.frame(setdiff(seinet.herbs, gbif.herbs)) #institution codes that are in seinet but not gbif
+
+```
+
+
+#Create a Rdataframe
+with the new datasheet to use in next script
+
+```{r}
+
+save(dat.df, seinet, gbif, fig, file="script1_output.RData")
+
+#save.image(file="script1_output_ALL.RData")
+
+```
