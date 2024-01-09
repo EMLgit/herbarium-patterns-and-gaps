@@ -1,0 +1,177 @@
+---
+title: "GitHub_script2_compareTaxLists"
+author: "emlombardi"
+date: "2023-05-17"
+output: html_document
+---
+
+#Info Do you have a regional or taxonomic species list that you can compare your larger data to? That's great! Are you assembling this diversity baseline de novo? That's also rad. The script here is optional; you do not need to run it for our next steps (starting in script 3).
+
+That said, if you have an expert list to use in verifying the taxonomic diversity of your complied dataset, use it! You can decide how much you want to depend on the list, but if you really want to make sure you're not including any aberrant taxonomic groups, you could use it to filter your larger dataset. That's not what we do here; we use an expert-compiled list of species in New Mexico (PAlist) as a comparison, but we do not filter to include only the species listed on this list.
+
+```{r libraries}
+library(dplyr)
+library(lubridate)
+library(TNRS)
+```
+
+## Read in data
+
+There are two necessary datasets for this analysis: 1. Your data from script 1 2. Expert-compiled list for comparison
+
+```{r}
+#your data (if it's not already loaded)
+dat<-read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/datClean_allrecords.csv", header=TRUE)
+
+#OR
+load("datCleanAllRecords.RData") 
+dim(dat) #349987 records after script 1
+
+
+#read in expert list
+PAlist <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/PAlist_cleaned.csv", header=TRUE) 
+names(PAlist)
+
+#second expert list: Flora Neomexicana list of families (only works for families in this format)
+FNMlist <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/FNMlist.csv", header=TRUE)
+
+FNMlist <- read.csv("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/HF_FloraNeoMexicana_full.csv", header=TRUE) #This is the new list from Harpo that is taxa-level and more inclusive
+
+
+
+```
+
+#Compare your data to the raw expert data You may or may not want to harmonize the list of unique taxa from the expert list. We do, but not until the next chunk. Before that, we want to compare the taxonomic groups between our full dataset and the raw (pre-harmonized) expert dataset.
+
+```{r}
+#compare families
+length(unique(dat$Accepted_family))
+length(unique(PAlist$family)) 
+length(unique(FNMlist$family))
+
+#compare genera
+length(unique(dat$Genus_matched))
+length(unique(PAlist$paGenus)) 
+
+#compare species
+length(unique(dat$Accepted_name))
+length(unique(PAlist$taxon)) 
+length(unique(FNMlist$taxon.used.in.FNM))
+
+
+
+```
+
+#Compare to harmonized list You likey want to harmonize the taxonomic list that you're using as your expert list, too. This is not because the expert who created the list is wrong; it's to ensure that you are comparing equivalent data products.
+
+The harmonized expert data frame will be PA.ls after the next chunk.
+
+```{r}
+
+PA.ls <- unique(PAlist$taxon) #unique taxa
+PA_tax <-TNRS(taxonomic_names = PA.ls, sources = c("wcvp"))
+
+PA.ls <- dplyr::left_join(PAlist, PA_tax, by=c('taxon'='Name_submitted'), keep=TRUE) #join higher tax with original data frame
+
+
+#now check the number of species
+length(unique(PA.ls$Accepted_name)) #4478 unique names in expert list
+length(unique(dat$Accepted_name)) #7370 unique names in our list
+
+
+```
+
+### TO DO TO SEND TO HANNAH
+1. harmonize species list from FNM (Harpo will send it to me)
+2. create a three column df with a species list (combined: our list + FNM list), then the number of instances that each taxa occur in our dataset vs flora
+
+````{r}
+#Clean up special characters in FNM
+FNMlist <- FNMlist %>%
+  mutate(taxon.fnm =str_replace(taxon.used.in.FNM, "ë", "e"))
+  
+  
+FNM.ls <- unique(FNMlist$taxon.used.in.FNM) #unique taxa
+FNM_tax <-TNRS(taxonomic_names = FNM.ls, sources = c("wcvp"))
+
+FNM.df <- dplyr::left_join(FNMlist, FNM_tax, by=c('taxon.used.in.FNM'='Name_submitted'), keep=TRUE) #join higher tax with original data frame
+
+
+#now check the number of species
+length(unique(FNM.df$Accepted_name)) #4261 unique names in expert list
+length(unique(dat$Accepted_name)) #7210 unique names in our list
+
+
+#which species were lost in harmonization? Four fewer taxa in post-TNRS list
+spp.orig2 <- anti_join(FNMlist, FNM_tax, by=c('taxon.used.in.FNM'='Name_submitted'))
+
+write.csv(FNM_tax, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Flora Neomexicana data resources/FNMtax_tnrsDF.csv", row.names=TRUE)
+
+##Write a list of FNM taxon list
+dat.fnm <- as.data.frame(unique(FNM.df$Accepted_name))
+write.csv(dat.fnm, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Flora Neomexicana data resources/FNM.ls_tnrsharmonized_list.csv", row.names=TRUE)
+
+##Write a list of our taxon list
+dat.ls <- as.data.frame(unique(dat$Accepted_name))
+write.csv(dat.ls, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Flora Neomexicana data resources/dat.ls_tnrsharmonized.csv", row.names=TRUE)
+
+
+```
+
+###Harmonize Flora Neomexicana family-level taxonomy
+I will create a list that updates the family taxonomy listed in the Flora Neomexicana, even though this is maybe not necessary? There are some outdated classifications in the original list, and we're just trying to make equivalent comparisons. 
+
+```{r}
+FNM.ls <- unique(FNMlist$Family) #unique family taxa. 159 families.
+FNM_tax <- TNRS(taxonomic_names = FNM.ls, sources = c("wcvp"))
+
+fnm.tax <- dplyr::left_join(FNMlist, FNM_tax, by=c('Family'='Name_submitted'), keep=TRUE) #join higher tax with original data frame by the string submitted
+
+length(fnm.tax$Name_submitted)
+length(unique(fnm.tax$Name_matched)) #145 unique harmonized families in FNM
+
+write.csv(fnm.tax, "FloraNM_taxized.csv", row.names=TRUE)
+
+```
+
+# Family-level check
+Not checking against an expert list; here we're just checking to see if family level taxonomy seems reasonable pre- versus post- harmonization. 
+
+
+```{r}
+famCheck <- dat %>%
+  select(family, Accepted_family, Name_submitted, Accepted_name)
+ 
+famCheck <- famCheck %>% filter(family != Accepted_family | xor(is.na(family), is.na(Accepted_family))) %>% group_by(family) #13050 records with different family level classification pre and post harmonization
+
+
+write.csv(famCheck, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Problematic Data (to check)/familyMismatches.csv", row.names=TRUE)
+
+length(unique(famCheck$Accepted_family)) #105 families output
+length(unique(famCheck$family)) #250 families input
+```
+
+
+#Table comparing FNM to our family-level taxonomic data
+
+```{r}
+#Prepare list of harmonized FNM family-level taxa
+fnm.taxls <- fnm.tax %>%
+  filter(!Name_matched == "[No match found]") %>%
+  select(Name_matched) %>%
+  rename("FNM_families" = "Name_matched")
+
+#Prepare list of harmonized taxa from our combined database effort
+db.taxls <- dat %>%
+  group_by(Accepted_family) %>%
+  summarize(count=n()) %>%
+  filter(!Accepted_family=="")
+
+#Now create a series of tables to include in supplements
+both <- inner_join(db.taxls, fnm.taxls, by= c("Accepted_family" = "FNM_families")) 
+FNMonly <- anti_join(fnm.taxls, db.taxls, by=c("FNM_families" = "Accepted_family"))
+DBonly <- anti_join(db.taxls, fnm.taxls, by=c("Accepted_family" = "FNM_families"))
+
+
+```
+

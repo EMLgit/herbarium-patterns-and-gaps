@@ -1,0 +1,979 @@
+---
+title: "GitHub_script4_environmentalData"
+author: "emlombardi"
+date: "2023-07-14"
+output: html_document
+---
+
+## Information 
+
+This script adds columns to the georeferenced dataframe by extracting data from multiple categories of environmental data at each recorded coordinate. Most environmental data is provided as vector data, but PRISM data are continuous rasters. We also bin these abiotic variables so that they can be treated similarly to the vector groups for downstream analyses. 
+
+
+```{r libraries}
+library(maps)
+library(mapview)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(spatstat)
+library(stars)
+library(stringr)
+library(tidyverse)
+library(spdep)
+library(splm)
+library(terra) #unloaded issue
+library(geodata) #unloaded issue
+library(ggplot2)
+library(ggpubr)
+library(prism)
+library(AOI)
+library(climateR)
+library(raster)
+library(rasterVis)
+
+theme_set(theme_pubr())
+
+
+#Area of interest. ADD THIS TO THE FIRST WKT DEFINITION
+aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
+class(aoi)
+plot(aoi$geometry) #sf boundary of NM state
+
+
+#Create a raster aoi also, which I'll need for clipping PRISM data
+aoi.rast <- rasterize(aoi)
+
+```
+
+## Load Data
+
+Use the georeferenced data (`dat_sf`) from the previous cleaning script. For the NM project, our georeferenced record dataframe is 243,470 records at this time. 
+
+In this chunk we also create a simple features object (sf object) that is a 2 column dataframe of only the coordinates in dat_sf. We defined the coordinate reference system (CRS) as WGS84. 
+
+```{r}
+
+load(file="GitHub_script3_georefCleaned 3.Rdata")
+dim(dat_sf) #219,222 records
+
+
+#create spatial feature from coordinates 
+c2 <- as.data.frame(dat_sf) %>% 
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=4326, remove=FALSE) 
+
+class(coords)
+class(c2) #sf format
+
+
+#Also define your null expectation for records/area as the total number of records in NM divided by the total area of the state
+
+NM.recs<-nrow(dat)
+NM.area <- 314917 #square kilometers
+NM.area.m <- 314917000000 #square kilometers
+
+NM.null <- NM.recs/NM.area # 1.11136 records per square kilometer expected
+NM.null.m <- NM.recs/NM.area.m
+
+```
+
+
+#Add spatial data columns
+Each of the next iterative chunks loads a new environmental dataset that is open access and publically available. The script was written to facilitate research in the southwestern United States of America (New Mexico specifically), but different raster and vector data for other regions could also be used. 
+
+##Shapefiles 
+
+###Counties
+```{r}
+###Load shapefile of study area (in our case, New Mexico)
+bb.nm<-tigris::tracts(state = 'NM')
+bb.nm<-st_as_sf(bb.nm) %>% st_transform(crs=4326)
+bb.nm$bbnm.area <- st_area(bb.nm) #calculate area from geometries
+
+#Join coords to layer of county boundaries. DUPLICATING RECORDS. 522-ish rows added
+env.v <- env.v %>% st_join(left = TRUE, bb.nm["COUNTYFP"])  %>% st_join(left = TRUE, bb.nm["bbnm.area"])
+
+
+
+####Load shapefile of primary roads from 2019 TIGRIS
+#switch off spherical geometry
+sf::sf_use_s2(FALSE)
+
+
+roads <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/tl_2019_us_primaryroads/tl_2019_us_primaryroads.shp", crs=4326)
+
+#Calculate area
+roads <- st_intersection(roads, aoi)
+plot(roads)
+
+
+```
+
+
+###Physiogeographic
+```{r}
+#switch off spherical geometry
+sf::sf_use_s2(FALSE)
+
+#physiographic map
+physio <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/physio_shp/physio.shp", crs=4326)
+
+#Calculate area
+physio.clip <- st_intersection(physio, aoi)
+
+physio.clip$physio.area <- st_area(physio.clip) #calculate area from geometries
+plot(st_geometry(physio.clip)) #this is the physiographic map of the entire USA
+
+env.v <- st_join(c2, left = TRUE, physio["PROVINCE"]) %>% st_join(left=TRUE, physio["physio.area"])
+
+
+#Calculate area
+physio.clip <- st_intersection(physio, aoi)
+
+physio.clip <- physio.clip %>%
+  group_by(PROVINCE) %>%
+  summarise(tot.area = sum(physio.area)) %>%
+  dplyr::select(-geometry) 
+
+physio.clip <- physio.clip %>%
+  mutate(area.kms = as.numeric(set_units(tot.area, km^2)))
+
+physio.cnt <- env.v %>% 
+  group_by(physio) %>%
+  summarise(cnt=n()) %>%
+  filter(!physio=="")
+
+physio <- left_join(physio.clip, physio.cnt, by=c("PROVINCE"="physio")) #use this for the proportional plots later
+
+
+#Plot
+plot(st_geometry(physio.clip$geometry))
+
+physio.map<-ggplot() + 
+  geom_sf(data=physio.clip$geometry, aes(fill=physio.clip$PROVINCE)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+physio.map <- physio.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/physio_map.png", physio.map, width = 14, height = 12, dpi = 300)
+
+```
+
+
+###Geologic
+
+```{r}
+#geologic map
+georeg <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/slo_GeologicRegions/slo_oggeolregions.shp")
+georeg <-st_transform(georeg, crs=nm_crs) #necessary step to get coords in the right alignment
+georeg$georeg.area <- st_area(georeg) #calculate area from geometries
+plot(st_geometry(georeg)) #this is the geologic map of NM
+
+#Join geologic and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, georeg["LABEL"])  %>% st_join(left = TRUE, georeg["georeg.area"])
+
+
+#Plot
+
+geol.map<-ggplot() + 
+  geom_sf(data=georeg$geometry, aes(fill=georeg$LABEL)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+geol.map <- geol.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/geological_map.png", geol.map, width = 14, height = 12, dpi = 300)
+```
+
+###Ecoregion 3 and 4
+```{r}
+#ecoregion III
+ecoreg.l3 <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/nm_eco_l3/nm_eco_l3.shp")
+ecoreg.l3 <-st_transform(ecoreg.l3, crs=4326) #necessary step to get coords in the right alignment
+ecoreg.l3$ecoreg3.area <- st_area(ecoreg.l3) #calculate area from geometries
+
+#Join ecoregion and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, ecoreg.l3["US_L3NAME"])  %>% 
+  st_join(left = TRUE, ecoreg.l3["ecoreg3.area"])
+
+#Plot eco3
+eco3.map<-ggplot() + 
+  geom_sf(data=ecoreg.l3$geometry, aes(fill=ecoreg.l3$US_L3NAME)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+eco3.map <- eco3.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/ecoregion3_map.png", eco3.map, width = 14, height = 12, dpi = 300)
+
+
+#ecoregion IV
+ecoreg.l4 <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/nm_ecoregions_l4/nm_eco_l4.shp")
+ecoreg.l4 <-st_transform(ecoreg.l4, crs=4326) #necessary step to get coords in the right alignment
+ecoreg.l4$ecoreg4.area <- st_area(ecoreg.l4) #calculate area from geometries
+
+#Join ecoregion and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, ecoreg.l4["US_L4NAME"])  %>% 
+  st_join(left = TRUE, ecoreg.l4["ecoreg4.area"]) 
+
+#Plot eco4
+eco4.map<-ggplot() + 
+  geom_sf(data=ecoreg.l4$geometry, aes(fill=ecoreg.l4$US_L4NAME)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+eco4.map <- eco4.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/ecoregion4_map.png", eco4.map, width = 14, height = 12, dpi = 300)
+
+```
+
+### Land ownership
+
+```{r}
+#land ownership shapefile map
+owner <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/SURFACE_OWN/Surface_Ownership.shp") #dbf file also needs to be available (not on cloud)
+owner <-st_transform(owner, crs=4326) #necessary step to get coords in the right alignment
+owner$own.area <- st_area(owner) #calculate area of land parcels
+
+
+#Join ownership areas and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, owner["own"])  %>% st_join(left = TRUE, owner["own.area"])
+
+
+###MAPPING
+# Then, perform the spatial clipping using st_intersection()
+own.clip <- st_intersection(owner, aoi)
+plot(st_geometry(own.clip$geometry))
+
+own.map<-ggplot() + 
+  geom_sf(data=own.clip$geometry, aes(fill=own.clip$own)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+own.map <- own.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/own_map.png", own.map, width = 14, height = 12, dpi = 300)
+
+
+```
+
+### Southwestern biotic communities
+
+```{r}
+#TNC sw biotic map
+swbio <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/TNC SW biotic communities/sw_biotic_communities.shp")
+swbio <-st_transform(swbio, crs=4326) #necessary step to get coords in the right alignment
+swbio.geo <- st_geometry(swbio)
+swbio$swbio.area <- st_area(swbio) #calculate area of swbio regions
+
+#Join geologic and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, swbio["COMMUNITY"])  %>% st_join(left = TRUE, swbio["swbio.area"])
+
+
+###MAP
+
+swbio.clip <- st_intersection(swbio, aoi)
+
+swbio.nmArea <- swbio.clip %>%
+  group_by(COMMUNITY) %>%
+  summarise(tot.area = sum(swbio.area)) %>%
+  as.data.frame() %>%
+  dplyr::select(-geometry) 
+
+swbio.nmArea<- swbio.nmArea %>%
+  mutate(area.kms = as.numeric(set_units(tot.area, km^2)))
+
+
+write.csv(swbio.nmArea, "swbio.NMonlyAreas.csv", row.names=TRUE)
+
+
+plot(st_geometry(swbio.clip$geometry))
+
+swbio.map<-ggplot() + 
+  geom_sf(data=swbio.clip$geometry, aes(fill=swbio.clip$COMMUNITY)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+swbio.map <- swbio.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/swbio_map.png", swbio.map, width = 14, height = 12, dpi = 300)
+
+```
+
+
+### Areas of ecological concern (ACEC)
+
+```{r}
+acec<- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/ACEC/ACEC.shp") %>% st_transform(crs=4326)
+#add column of protected lands area 
+acec$acec.area <- st_area(acec) #calculate area from geometries
+
+aoi$aoi.area <- st_area(aoi)
+
+#Join protected areas and coords to extract values
+env.v <- env.v %>% st_join(left = TRUE, acec["ACEC_NAME"])  %>% st_join(left = TRUE, acec["acec.area"]) %>% st_join(left=TRUE, acec["LUP_NAME"]) #ADDS 168 RECORDS (DUPLICATES)
+
+
+#replace NA values with 'unprotected'
+env.v <- env.v %>%
+  mutate(protection = ifelse(is.na(protection), "unprotected", protection))
+
+#make all characters lower case for consistency
+env.v <- env.v %>%
+  mutate_at(vars(protection), tolower)
+
+###MAP
+
+
+plot(st_geometry(acec$geometry))
+
+acec.map<-ggplot() + 
+  geom_sf(data=aoi$geometry, color="white") +
+  geom_sf(data=acec$geometry, aes(fill=acec$ACEC_NAME)) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+acec.map <- acec.map +  theme(legend.position = "none")
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/protection_map.png", acec.map, width = 14, height = 12, dpi = 300)
+
+
+
+```
+
+
+###Rename categorical variables (columns)
+This is so it's just easier to call these columns downstream
+```{r}
+env.v <- env.v %>% 
+  rename("physio" = "PROVINCE") %>%
+  rename("ecoreg3" = "US_L3NAME") %>% 
+  rename("ecoreg4" = "US_L4NAME") %>%
+  rename("swbiocomm" = "COMMUNITY") %>%
+  rename("protection" = "ACEC_NAME") %>%
+  rename("ownership" = "own") %>%
+  rename("geologic" ="LABEL")
+
+
+
+```
+
+
+#Abiotic data
+###PRISM data
+```{r}
+library(prism)
+load(file="geoDF_withenvironmental.RData")
+
+
+#Specify where raster layers will go
+options(prism.path="/Users/elizabethlombardi/Desktop/PRISM")
+#Set folder for where PRISM layer downloads go
+prism_set_dl_dir("/Users/elizabethlombardi/Desktop/PRISM") 
+
+
+#check out the list of rasters I now have
+prism_archive_ls()
+prism_get_dl_dir()
+
+
+#IF you don't have any data in your archive folder already 
+# Download the 30-year annual average precip and annual average temperature
+get_prism_normals("ppt", "4km", annual = TRUE, keepZip = FALSE)
+get_prism_normals("tmean", "4km", annual = TRUE, keepZip = FALSE)
+
+# Grab the prism data and compile the files into a raster stack (precip and temp)
+climate_data <- prism_archive_ls() %>%  
+  pd_stack(.)  
+climate_data<-crop(climate_data, aoi) #clip to just NM
+
+# Extract project coordinates from raster stack
+climate_crs <- climate_data@crs@projargs
+
+# Convert collection locations to format and projection that matches prism data
+# make spatial
+env.v <- env.v %>% 
+  mutate_at(c("decimalLongitude", "decimalLatitude", "id"), as.numeric) %>%
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=CRS(climate_crs), remove=FALSE) %>%
+  as.data.frame(.) 
+
+coordinates(env.v) <- c('decimalLongitude', 'decimalLatitude')
+proj4string(env.v) <- CRS(climate_crs)
+
+
+# Extract the data from the raster stack for those sites 
+prism.df <- data.frame(coordinates(env.v), 
+                  env.v$id,
+                  extract(climate_data, env.v))
+
+
+
+#rename columns with annual mean precip and temp values for each row
+prism.df <- prism.df %>% #includes provisional 2022 data
+#  mutate_at(c("env.coords.id"), as.numeric) %>%
+  rename("precip30yr" = "PRISM_ppt_30yr_normal_4kmM4_annual_bil") %>% 
+  rename("temp30yr" = "PRISM_tmean_30yr_normal_4kmM4_annual_bil") %>%
+  rename("prismLong" = "decimalLongitude") %>%
+  rename("prismLat" = "decimalLatitude")
+  
+
+#convert env.v back to dataframe
+env.v <- as.data.frame(env.v)
+
+#join prism.means with env.v using id columns DUPLICATES!! 3972 duplicated records because of many-to-many match here. 
+env.v <- left_join(env.v, prism.df, by=(c("id"="env.v.id"))) #this joins PRISM 30-year normals to env.v dataframe, and also two new lat/long columns. Useful to make sure the abiotic data line up with the right collections.
+
+
+```
+
+###Elevation data
+
+```{r}
+library(rasterVis)
+library(raster)
+#library(rgl)
+library(rgdal)
+library(elevatr)
+
+
+elevation <- get_elev_raster(aoi, z = 9)
+plot(elevation, main="This the downloaded DEM [meters]")
+plot(aoi$geometry, add=TRUE)
+
+#crop to NM boundary
+elevNM_crop = crop(elevation, aoi)
+plot(elevNM_crop, main="Cropped Digital elevation model")
+plot(aoi$geometry, add=TRUE)
+plot()
+
+elevNM_crop
+
+
+#reproject
+# Project Raster
+# to have control,  we create one raster object
+# using projectExtent (no values are transferred)
+prj_dd <- "EPSG:4326"
+pr3 <- projectExtent(elevNM_crop, prj_dd)
+# Adjust the cell size 
+res(pr3) <- 100
+
+# now project
+rep_elev <- projectRaster(pr3, prj_dd)
+hist(elevNM_crop)
+
+# Grab the elevation data and compile the files into a raster stack
+elev_data <- pd_stack(.)  
+
+# Extract project coordinates from raster stack
+elev_crs <- elevNM_crop@crs@projargs
+
+
+# Convert collection locations to format and projection that matches prism data
+# make spatial
+env.v <- env.v %>% 
+  mutate(rowID=row_number())%>%
+  mutate_at(c("decimalLongitude", "decimalLatitude", "rowID"), as.numeric) %>%
+  filter(!decimalLongitude=="", !decimalLatitude=="") %>%
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=CRS(elev_crs), remove=FALSE) %>%
+  as.data.frame(.) 
+dim(env.v) #219216 records
+
+class(env.v)
+coordinates(env.v) <- c('decimalLongitude', 'decimalLatitude')
+proj4string(env.v) <- CRS(elev_crs)
+class(env.v)
+
+# Extract the  extracted from the raster stack for those sites 
+elev.df <- data.frame(coordinates(env.v), 
+                  env.v$rowID,
+                  extract(elevNM_crop, env.v))
+
+#rename columns 
+elev.df <- elev.df %>% 
+  rename("rowID" = "env.v.rowID") %>%
+  rename("elevation" = "extract.elevNM_crop..env.v.") %>%
+  rename("elevLat"="decimalLongitude")%>%
+  rename("elevLong"="decimalLatitude")
+  
+
+#convert env.v back to dataframe so we can join it to the elevation dataframe (elev.df)
+env.v <- as.data.frame(env.v)
+
+
+#join elev.df with env.v using id columns
+env.v <- left_join(env.v, elev.df, by="rowID") #this joins the elevation dataframe to the env.v main dataframe. Why did this increase the number of rows?
+
+all(env.v$decimalLatitude.x == env.v$elevLat) #again, just make sure the new lat/long coords match the old ones, which confirms if the join worked
+dim(env.v) 
+
+
+```
+
+##Bin and map abiotic variables
+
+Now we want to create columns with the continuous abiotic variables (elevation, precipitation and temperature) binned. This enables us to include them in downstream analyses with the other sociopolitical and biotic variables (e.g. heat maps, etc.)
+
+
+```{r}
+#Bin the abiotic variables into ten bins instead of quantiles
+labels = c("Very Low", "Low", "Somewhat Low", "Moderately Low", 
+             "Moderate", "Moderately High", "High", "Somewhat High", 
+             "Very High", "Extremely High")
+
+#Add the binned data to the env.v dataframe  
+env.v <- env.v %>%
+    mutate(temp.bin = cut(temp30yr, breaks = 10, labels=labels)) %>%
+    mutate(ppt.bin = cut(precip30yr, breaks = 10, labels=labels)) %>%
+    mutate(elev.bin = cut(elevation, breaks = 10, labels=labels))
+
+#calculate the ranges for the different bins in the abiotic variables so we can report in tables
+elev.bins <- env.v %>% group_by(elev.bin) %>%
+  summarize(Min_Value = min(elevation),
+            Max_Value = max(elevation))
+
+ppt.bins <- env.v %>% group_by(ppt.bin) %>%
+  summarize(Min_Value = min(precip30yr),
+            Max_Value = max(precip30yr))
+
+temp.bins <- env.v %>% group_by(temp.bin) %>%
+  summarize(Min_Value = min(temp30yr),
+            Max_Value = max(temp30yr))
+
+
+
+
+#######HERE HERE HERE to start MAPPING
+
+# Define the breaks and labels
+breaks <- 10
+
+elevation_data_rast <- elevation_data #So that I don't have to re-run the line below to get the raster form back
+elevation_data <- elevatr::get_elev_raster(locations = aoi, z=9, clip="locations")
+elevation_data <- as.data.frame(elevation_data, xy=TRUE)
+colnames(elevation_data)[3] <- "elevation"
+elevation_data <- elevation_data[complete.cases(elevation_data), ] #this only keeps coords with complete data
+
+
+#PRISM
+#prism_data <-as.data.frame(prism.df, xy=TRUE)
+prism_data <-as.data.frame(climate_data, xy=TRUE)
+prism_data <- prism_data[complete.cases(prism_data), ] #this only keeps coords with complete data (none dropped)
+#prism_data_clipped <- crop(climate_data, aoi)
+
+
+
+# Bin the data
+elevation_data$elevation_bin <- cut(elevation_data$elevation, breaks = breaks, labels = labels)
+prism_data$temp_bin <- cut(prism_data$PRISM_tmean_30yr_normal_4kmM4_annual_bil, breaks = breaks, labels = labels)
+prism_data$ppt_bin <- cut(prism_data$PRISM_ppt_30yr_normal_4kmM4_annual_bil, breaks = breaks, labels = labels)
+
+
+# Create the modified ggplot map with continuous data and colors
+ggplot() +
+  geom_raster(data = elevation_data, aes(x = x, y = y, fill = elevation)) +
+  geom_sf(data = aoi, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_viridis_c() +
+  labs(title = "Elevation in New Mexico", x = "Longitude", y = "Latitude", fill = "Elevation Group") +
+  theme_bw()
+
+ggplot() +
+  geom_raster(data = elevation_data, aes(x = x, y = y, fill = elevation)) +
+  geom_sf(data = aoi, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_smoothrainbow(discrete=FALSE, reverse=FALSE) +
+  labs(title = "Elevation in New Mexico", x = "Longitude", y = "Latitude", fill = "Elevation Group") +
+  theme_bw()
+
+
+#DISCRETE
+elev.map2<-ggplot() +
+  geom_raster(data = elevation_data, aes(x = x, y = y, fill = elevation_bin)) +
+  geom_sf(data = aoi, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title = "Elevation in New Mexico", x = "Longitude", y = "Latitude", fill = "Elevation Group") +
+  theme_bw()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/elevationMap1_binned.png", elev.map2, width = 10, height = 5, dpi = 300)
+
+
+
+temp.map2 <- ggplot() +
+  geom_raster(data = prism_data, aes(x = x, y = y, fill = temp_bin)) +
+  geom_sf(data = aoi, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title = "Elevation in New Mexico", x = "Longitude", y = "Latitude", fill = "Temperature Group") +
+  theme_bw()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/temperatureMap_binned.png", temp.map2, width = 10, height = 5, dpi = 300)
+
+
+ppt.map2 <- ggplot() +
+  geom_raster(data = prism_data, aes(x = x, y = y, fill = ppt_bin)) +
+  geom_sf(data = aoi, color = "white", fill = NA) +
+  coord_sf() +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title = "Elevation in New Mexico", x = "Longitude", y = "Latitude", fill = "Temperature Group") +
+  theme_bw()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Maps/precipitationMap_binned.png", ppt.map2, width = 10, height = 5, dpi = 300)
+
+
+#Revise axes as needed
+elev.map <- elev.map2 +
+   theme(legend.position = "none")
+
+```
+
+#Calculate binned areas
+
+```{r}
+####Calulate area in the binned abiotic categories
+elevRast <- elevatr::get_elev_raster(locations = aoi, z=9, clip="locations") #just use elevation_data from above?
+elevation_data <- elevation_data_rast #for when you need the raster again
+
+# Convert the raster to a vector
+elevation_vector <- as.vector(elevation_data)
+ppt_vector <- as.vector(climate_data$PRISM_ppt_30yr_normal_4kmM4_annual_bil)
+temp_vector <- as.vector(climate_data$PRISM_tmean_30yr_normal_4kmM4_annual_bil)
+
+# Define elevation bins
+num_bins <- 10
+bin_labels <- seq(minValue(elevation_data), maxValue(elevation_data), length.out = num_bins + 1)
+bin_labels_ppt <- seq(minValue(climate_data$PRISM_ppt_30yr_normal_4kmM4_annual_bil), maxValue(climate_data$PRISM_ppt_30yr_normal_4kmM4_annual_bil), length.out = num_bins + 1)
+bin_labels_temp <- seq(minValue(climate_data$PRISM_tmean_30yr_normal_4kmM4_annual_bil), maxValue(climate_data$PRISM_tmean_30yr_normal_4kmM4_annual_bil), length.out = num_bins + 1)
+
+
+# Bin the elevation vector
+elevation_bins <- cut(elevation_vector, breaks = bin_labels, labels = FALSE)
+ppt_bins <- cut(ppt_vector, breaks = bin_labels_ppt, labels = FALSE)
+temp_bins <- cut(temp_vector, breaks = bin_labels_temp, labels = FALSE)
+
+# Calculate cell areas
+cell_areas <- area(elevation_data, unit = "square kilometers")
+cell_area_ppt <- area(climate_data$PRISM_ppt_30yr_normal_4kmM4_annual_bil, unit = "square kilometers")
+cell_area_temp <- area(climate_data$PRISM_tmean_30yr_normal_4kmM4_annual_bil, unit = "square kilometers")
+
+# Initialize a vector to store bin areas
+bin_areas <- rep(NA, num_bins)
+
+# Loop through each bin and calculate the total area
+for (bin in 1:num_bins) {
+  bin_areas[bin] <- sum(cell_areas[elevation_bins == bin])
+}
+
+# Create a data frame with elevation bins and their corresponding areas
+bin_area_elev <- data.frame(bin = bin_labels[-length(bin_labels)], area = bin_areas)
+bin_area_sum_ppt <- data.frame(bin = bin_labels_ppt[-length(bin_labels_ppt)], area = bin_areas)
+bin_area_sum_temp <- data.frame(bin = bin_labels_temp[-length(bin_labels_temp)], area = bin_areas)
+
+#Add categories to the dataframe
+labs<-as.data.frame(labels)
+elevdf <- cbind(bin_area_elev, labs)
+pptdf <- cbind(bin_area_sum_ppt, labs)
+tempdf <- cbind(bin_area_sum_temp, labs)
+
+
+#join the dataframe with binned elevation 
+
+#may need to convert env.v back to data frame
+env.v <- st_as_sf(env.v)
+
+
+#elevation grouping and join dataframes
+elev1 <- env.v %>%
+  filter(!elev.bin=="") %>%
+  group_by(elev.bin) %>%
+  summarise(cnt = n()) 
+elev1a <- left_join(elevdf, elev1, by=c("labels" = "elev.bin")) #Use this for proportional plots in figures
+
+#Precipitation grouping and join dataframes
+ppt1 <- env.v %>%
+  filter(!ppt.bin=="") %>%
+  group_by(ppt.bin) %>%
+  summarise(cnt = n()) 
+ppt1a <- left_join(pptdf, ppt1, by=c("labels" ="ppt.bin"))  #Use this for proportional plots in figures
+
+
+
+#Temperature grouping and join dataframes
+temp1 <- env.v %>%
+  filter(!temp.bin=="") %>%
+  group_by(temp.bin) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+temp1a<- temp1 %>%
+  group_by(temp.bin) %>%
+  left_join(tempdf, by=c("temp.bin"="labels"))
+
+temp1 <- env.v %>%
+  filter(!temp.bin=="") %>%
+  group_by(temp.bin) %>%
+  summarise(cnt = n()) 
+temp1a <- left_join(tempdf, temp1, by=c("labels" ="temp.bin"))  #Use this for proportional plots in figures
+
+
+```
+
+
+###Proportional plots of Abiotic variables
+
+```{r}
+#Elevation
+elev.prop.labs <- ggplot(elev1a, aes(x=area, y=cnt, color=reorder(labels, bin))) +
+  geom_abline(intercept = 0, slope = NM.null, color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  geom_text(vjust=-1, label= elev1a$labels, size=3) +
+  labs(title="Collections across proportional space", x="Elevational zone (km squared)", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+elev.prop.labs
+
+elev.prop.NoLabs <- ggplot(elev1a, aes(x=area, y=cnt, color=reorder(labels, bin))) +
+  geom_abline(intercept = 0, slope = NM.null, color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  #geom_text(vjust=-1, label= elev1a$elev.bin, size=3) +
+  labs(title="Collections across proportional space", x="Elevational zone (kilometers squared)", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+elev.prop.NoLabs
+elev.prop<-elev.prop.NoLabs
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/binnedElevation_proportional_Labeled.png", elev.prop.labs, width = 14, height = 12, dpi = 300)
+
+##Precipitation
+ppt.prop <- ggplot(ppt1a, aes(x=area, y=cnt, color=reorder(labels, bin))) +
+  geom_abline(intercept = 0, slope = NM.null, color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  #geom_text(vjust=-2, label= ppt1a$labels, size=3) +
+  labs(title="Collections across proportional space", x="Precipitation zone (kilometers squared)", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+ppt.prop
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/binnedPrecipitation_proportional.png", ppt.prop, width = 14, height = 12, dpi = 300)
+
+
+##Temperature
+temp.prop <- ggplot(temp1a, aes(x=area, y=cnt, color=reorder(labels, bin))) +
+  geom_abline(intercept = 0, slope = NM.null, color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  #geom_text(vjust=-2, label= temp1a$temp.bin, size=3) +
+  labs(title="Collections across proportional space", x="Temperature zone (kilometers squared)", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+temp.prop
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/binnedTemperature_proportional.png", temp.prop, width = 14, height = 12, dpi = 300)
+
+
+```
+
+
+###Barplots Abiotic variables
+```{r}
+#Precipitation
+ppt.bar<-ggplot(ppt1a, aes(x=reorder(labels, bin), y = cnt, fill=reorder(labels, bin)
+)) +
+    geom_bar(stat = "identity") +
+    labs(title = NULL, x="Category", y = "Number of records", size=10) +
+    theme(panel.background = element_blank()) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8)) +
+    theme(axis.text.y = element_text(size=8))+
+    theme(axis.text = element_text(size=8)) +
+    scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(legend.position = "none") 
+
+
+#Temperature
+temp.bar<-ggplot(temp1a, aes(x=reorder(labels, bin), y = cnt, fill=reorder(labels, bin)
+)) +
+    geom_bar(stat = "identity") +
+    labs(title = NULL, x="Category", y = "Number of records", size=10) +
+    theme(panel.background = element_blank()) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8)) +
+    theme(axis.text.y = element_text(size=8))+
+    theme(axis.text = element_text(size=8)) +
+    scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(legend.position = "none") 
+
+
+
+#Elevation
+elev.bar<-ggplot(elev1a, aes(x=reorder(labels, bin), y = cnt, fill=reorder(labels, bin)
+)) +
+    geom_bar(stat = "identity") +
+    labs(title = NULL, x="Category", y = "Number of records", size=10) +
+    theme(panel.background = element_blank()) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8)) +
+    theme(axis.text.y = element_text(size=8))+
+    theme(axis.text = element_text(size=8)) +
+    scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(legend.position = "none") 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Barplots/ElevationBar.png", elev.bar, width = 14, height = 12, dpi = 300)
+
+
+```
+
+#Add Nearest Neighbor data
+
+```{r}
+library(spatstat)
+library(AOI)
+
+#Define area of interest
+aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
+class(aoi)
+aoi = st_transform(aoi, 32113)
+aoi.ppp =st_geometry(aoi)
+aoi.owin = as.owin(aoi.ppp) #this is the useful polygon
+
+#create a planar point pattern object from coordinates of records
+dat.sf<-st_as_sf(x=env.v,
+                 coords = c("decimalLongitude", "decimalLatitude"),
+                 crs= "+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+
+dat.sf = st_transform(dat.sf, 32113)
+dats = st_geometry(dat.sf)
+
+dat.ppp = as.ppp(dats) #these are the useful coordinates
+
+###check your spatstat objects
+class(dat.ppp) #ppp
+class(aoi.owin) #owin
+
+#link the window and point pattern
+ppp = dat.ppp[aoi.owin] #there are some records being dropped out of the analysis here. N=45 rows dropped. Likely borders our outside of NM aoi.
+
+plot(ppp) #good! 
+
+###quadrat count
+q = quadratcount(ppp, nx = 10, ny = 10)
+plot(q)
+
+quadrat.test(ppp, nx = 10, ny = 10) #data do not conform to CSR using quadrat counts. p-value < 2.2e-16
+
+
+###check kernel density 
+den = density(ppp)
+den
+
+plot(den, main = "")
+plot(ppp, pch = .2, cex = 0.05, add = TRUE)
+contour(den, add = TRUE)
+
+#
+#
+#Try rescaling the data so that they're in kilometers rather than meters. OPTIONAL depending on your units and preferences
+ppp.km <- rescale.ppp(dat.ppp, 1000, "km")
+q.km = quadratcount(ppp.km, nx = 10, ny = 10)
+plot(q.km)
+
+quadrat.test(ppp.km, nx = 10, ny = 10) #data do not conform to CSR using quadrat counts. p-value < 2.2e-16
+
+
+###check kernel density 
+den.km = density(ppp.km)
+den.km
+
+plot(den.km, main = "")
+plot(ppp.km, pch = .2, cex = 0.05, add = TRUE)
+contour(den.km, add = TRUE)
+
+#calculate mean distance in kilometers
+nn.km <- nndist(ppp.km, k=1)
+nn.all
+
+#choose unit to use (km or m)
+summary(nn.km) #mostly the nearest neighbor points are within a kilometer (i.e. distance is zero)
+summary(nn.all)
+
+#
+#
+#
+
+
+
+#calculate mean distance to the first nearest neighbor for each collection point
+nn.all <- nndist(ppp, k=1)
+
+
+##Add columns to env.v with ANN for nearest five neighbors (ANN) and the nearest neighbor (NN[,1])
+env.v <- env.v %>%
+  mutate(NN = nndist(ppp.km, k=1)) 
+
+env.v <- env.v %>%
+  mutate(ANN = rowSums(nndist(ppp.km, k=1:5))/5)
+
+```
+
+#Remove Duplicates
+There may be a number of records that have been duplicated because the spatial extraction had multiple lat/long points that correspond with different records. Ideally, this isn't happening, but you should keep track of if and where in your script the number of rows increases incorrectly. In our analysis of New Mexico botanical collections, we had 4,665 duplicated records throughout this script. These duplication events occured when we extracted data from PRISM 30-yr normals (n=3,972 rows added), TIGER county data (n=522 rows added), ACEC conservation areas (n=168 rows added) and BLM surface ownership (n=3 rows added). 
+
+It's not perfect, but we are handling these duplicated events by removing all but one unique catalogNumber from our final dataset. 
+
+```{r}
+#verifying that there are duplicated records by comparing the number of unique catalogNumber values to the number of total rows
+length(unique(env.v$catalogNumber)) #219222
+dim(env.v) #223899 records (include duplicates)
+
+(length(env.v$rowID))-(length(unique(env.v$catalogNumber))) #4677 rows with duplicate catalogNumbers
+
+
+#save the duplicated rows in case you need to go back and check 
+dups <- env.v %>%
+  mutate_at(c("catalogNumber"), as.numeric) %>%
+  filter(duplicated({{ catalogNumber }}) | duplicated({{ catalogNumber }}, fromLast = TRUE))
+
+#remove rows with duplicated records based on catalogNumber
+env.v <- env.v %>% distinct(catalogNumber, .keep_all = TRUE)
+dim(env.v)
+
+```
+#Save the georeferenced data 
+This Rdata stack includes two datasets:
+1. `env.v` is the full georeferenced dataset with all environmental variables, binned abiotic variables and point pattern columns for nearest neighbor information (nearest and average nearest neighbor distances). This should be used for geospatial analyses. 
+2. `dat` is the full cleaned dataframe of all records from GBIF and SEINet, as produced in our initial script. This should be used for taxonomic and temporal analyses.
+
+For our NM project, [dim(dat)= 349,987 by 131] and [dim(env.v)=219,222 by 162]
+
+```{r}
+
+save(env.v, dat, file="Data_both-allandgeo.RData")
+
+
+```
+
