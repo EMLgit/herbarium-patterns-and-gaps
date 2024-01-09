@@ -1,0 +1,1 @@
+This repository hosts the initial scripts associated with the UNM Herbarium patterns and gaps project (Lombardi, Faust and Marx).  Additional documentation and guides for using scripts to reproduce our analyses are forthcoming. 
