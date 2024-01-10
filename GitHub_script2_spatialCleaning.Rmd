@@ -9,20 +9,29 @@ output: html_document
 #libraries
 library(AOI)
 library(sf)
-library(rgeos)
+#library(rgeos) retired in October 2023
+library(geos)
 library(dplyr)
 library(CoordinateCleaner)
+library(terra)
 
-#data
-dat <- read.csv() #349987 records total from NM (includes non-georeferenced)
-#load(file="datCleanAllRecords.RData")
+remotes::install_github("paleolimbot/geos")
+
+#data; this is the output from GitHub_script1
+#load(file="dat")
 
 
 #Area of interest defined
 #Read in NM state boundary
-wkt<-readWKT("POLYGON((-105.88616 32.00197,-104.53205 32.00031,-104.52698 31.99688,-104.50208 31.99634,-104.46988 31.99812,-104.46379 32.00012,-103.06442 32.00052,-103.06464 33.00011,-103.04348 34.02044,-103.04326 35.12506,-103.04082 36.00004,-103.04192 36.50035,-103.00229 36.50089,-103.0022 37.0001,-103.62551 36.99863,-104.33883 36.99354,-104.62456 36.99438,-105.02923 36.99273,-105.1208 36.99543,-105.44725 36.99602,-106.8698 36.99242,-106.87729 37.00014,-109.04522 36.99908,-109.04679 35.38034,-109.04536 34.78539,-109.05004 31.33224,-108.20857 31.3334,-108.20839 31.7836,-106.52824 31.78315,-106.5274 31.79001,-106.53279 31.79244,-106.536 31.79851,-106.54416 31.80347,-106.54714 31.8073,-106.56295 31.81111,-106.56341 31.81274,-106.56647 31.81343,-106.57094 31.81021,-106.57724 31.81041,-106.58906 31.82271,-106.59382 31.8249,-106.60281 31.82502,-106.6053 31.82772,-106.60194 31.8396,-106.60204 31.84441,-106.60584 31.84631,-106.61479 31.84641,-106.62577 31.85617,-106.62817 31.86112,-106.63592 31.86624,-106.63487 31.87448,-106.62919 31.8837,-106.63392 31.88918,-106.64529 31.89486,-106.64548 31.89867,-106.64084 31.9046,-106.63367 31.90979,-106.62595 31.91223,-106.61875 31.9178,-106.61615 31.9173,-106.61185 31.92,-106.62393 31.92533,-106.62865 31.92361,-106.62974 31.92657,-106.62534 31.93003,-106.62216 31.93601,-106.62366 31.94551,-106.61525 31.94897,-106.61432 31.95162,-106.61437 31.95599,-106.61771 31.95601,-106.62282 31.95289,-106.62512 31.95453,-106.6243 31.96106,-106.61937 31.96478,-106.61957 31.97158,-106.62319 31.97292,-106.62652 31.97068,-106.6301 31.97126,-106.63819 31.97682,-106.63954 31.98034,-106.6365 31.98571,-106.63119 31.98981,-106.62357 31.991,-106.61945 31.99474,-106.61849 32.0005,-106.12553 32.00253,-105.88616 32.00197))", p4s="+proj=longlat +datum=WGS84")
+wkt_string <- "POLYGON((-105.88616 32.00197,-104.53205 32.00031,-104.52698 31.99688,-104.50208 31.99634,-104.46988 31.99812,-104.46379 32.00012,-103.06442 32.00052,-103.06464 33.00011,-103.04348 34.02044,-103.04326 35.12506,-103.04082 36.00004,-103.04192 36.50035,-103.00229 36.50089,-103.0022 37.0001,-103.62551 36.99863,-104.33883 36.99354,-104.62456 36.99438,-105.02923 36.99273,-105.1208 36.99543,-105.44725 36.99602,-106.8698 36.99242,-106.87729 37.00014,-109.04522 36.99908,-109.04679 35.38034,-109.04536 34.78539,-109.05004 31.33224,-108.20857 31.3334,-108.20839 31.7836,-106.52824 31.78315,-106.5274 31.79001,-106.53279 31.79244,-106.536 31.79851,-106.54416 31.80347,-106.54714 31.8073,-106.56295 31.81111,-106.56341 31.81274,-106.56647 31.81343,-106.57094 31.81021,-106.57724 31.81041,-106.58906 31.82271,-106.59382 31.8249,-106.60281 31.82502,-106.6053 31.82772,-106.60194 31.8396,-106.60204 31.84441,-106.60584 31.84631,-106.61479 31.84641,-106.62577 31.85617,-106.62817 31.86112,-106.63592 31.86624,-106.63487 31.87448,-106.62919 31.8837,-106.63392 31.88918,-106.64529 31.89486,-106.64548 31.89867,-106.64084 31.9046,-106.63367 31.90979,-106.62595 31.91223,-106.61875 31.9178,-106.61615 31.9173,-106.61185 31.92,-106.62393 31.92533,-106.62865 31.92361,-106.62974 31.92657,-106.62534 31.93003,-106.62216 31.93601,-106.62366 31.94551,-106.61525 31.94897,-106.61432 31.95162,-106.61437 31.95599,-106.61771 31.95601,-106.62282 31.95289,-106.62512 31.95453,-106.6243 31.96106,-106.61937 31.96478,-106.61957 31.97158,-106.62319 31.97292,-106.62652 31.97068,-106.6301 31.97126,-106.63819 31.97682,-106.63954 31.98034,-106.6365 31.98571,-106.63119 31.98981,-106.62357 31.991,-106.61945 31.99474,-106.61849 32.0005,-106.12553 32.00253,-105.88616 32.00197))"
 wkt.sf<-st_as_sf(wkt, crs=st_crs(4326))
 nm.geometry<-st_geometry(wkt.sf) #pull out the geometry from the polygon object (no attributes)
+
+
+#Area of interest. ADD THIS TO THE FIRST WKT DEFINITION
+aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
+class(aoi)
+plot(aoi$geometry) #sf boundary of NM state
 
 ```
 
@@ -35,35 +44,12 @@ From here on, we will only work with georeferenced records, and we will also cle
 
 ```{r}
 #remove any records without coordinates
-dat_geo <- dat %>% filter(!decimalLatitude=="", !decimalLongitude=="") #removes 129453 records without coordinates
-
+dat_geo <- dat %>% filter(!decimalLatitude=="", !decimalLongitude=="") #removes records without coordinates
 
 ## remove impossible coordinates
-dat_geo <- dat_geo %>% filter(!decimalLatitude>90, !decimalLatitude< -90) #removes 2 impossible records.  
+dat_geo <- dat_geo %>% filter(!decimalLatitude>90, !decimalLatitude< -90) #removes impossible records.  
 ```
 
-#Check the spatial alignment
-```{r mapping}
-world.inp  <- map_data("world")
-
-#check coordinate alignment on a map
-ggplot()+
-  geom_map(data=world.inp, 
-           map=world.inp, 
-           aes(x=long, y=lat, map_id=region), 
-           fill = "grey80")+
-  xlim(min(dat_geo$decimalLongitude, na.rm = T), 
-       max(dat_geo$decimalLongitude, na.rm = T))+
-  ylim(min(dat_geo$decimalLatitude, na.rm = T), 
-       max(dat_geo$decimalLatitude, na.rm = T))+
-  geom_point(data = dat_geo, 
-             aes(x = decimalLongitude, y = decimalLatitude, color=sourceDB),
-             size = 1)+
-  coord_fixed()+
-  theme_bw()+
-  theme(axis.title = element_blank())
-
-```
 
 
 ##Clip to polygon of area of interest
@@ -77,13 +63,9 @@ dat_sf <- st_as_sf(x=dat_geo,
                    crs= "+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 plot(dat_sf$geometry) #messy!
 
-
-
 #clip to NM boundary
-dat_sf <- dat_sf[nm.geometry, ]
+dat_sf <- dat_sf[aoi, ]
 plot(dat_sf$geometry) #fixed! Removed 1178 records
-
-
 
 
 #extract coords from sf geometry, because it converted to a single 'geometry' column when we made df an sf object

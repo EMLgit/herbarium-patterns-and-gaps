@@ -22,8 +22,8 @@ library(stringr)
 library(tidyverse)
 library(spdep)
 library(splm)
-library(terra) #unloaded issue
-library(geodata) #unloaded issue
+library(terra) 
+#library(geodata) #unloaded issue; can I move on without it?
 library(ggplot2)
 library(ggpubr)
 library(prism)
@@ -31,35 +31,33 @@ library(AOI)
 library(climateR)
 library(raster)
 library(rasterVis)
+library(elevatr)
 
-theme_set(theme_pubr())
-
-
-#Area of interest. ADD THIS TO THE FIRST WKT DEFINITION
+#Area of interest. 
 aoi=aoi_get(state="NM") %>% st_transform(crs=4326)
 class(aoi)
 plot(aoi$geometry) #sf boundary of NM state
 
 
 #Create a raster aoi also, which I'll need for clipping PRISM data
-aoi.rast <- rasterize(aoi)
+rastertemp <- raster(extent(aoi), resolution = 1)
+aoi.rast <- rasterize(aoi, rastertemp)
 
 ```
 
 ## Load Data
-
-Use the georeferenced data (`dat_sf`) from the previous cleaning script. For the NM project, our georeferenced record dataframe is 243,470 records at this time. 
+Use the georeferenced data (`env.v`) from the previous cleaning script. For the NM project, our georeferenced record dataframe is 243,470 records at this time. 
 
 In this chunk we also create a simple features object (sf object) that is a 2 column dataframe of only the coordinates in dat_sf. We defined the coordinate reference system (CRS) as WGS84. 
 
 ```{r}
 
 load(file="GitHub_script3_georefCleaned 3.Rdata")
-dim(dat_sf) #219,222 records
+dim(env.v) #219,222 records
 
 
 #create spatial feature from coordinates 
-c2 <- as.data.frame(dat_sf) %>% 
+c2 <- as.data.frame(env.v) %>% 
   st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs=4326, remove=FALSE) 
 
 class(coords)
@@ -67,10 +65,9 @@ class(c2) #sf format
 
 
 #Also define your null expectation for records/area as the total number of records in NM divided by the total area of the state
-
 NM.recs<-nrow(dat)
 NM.area <- 314917 #square kilometers
-NM.area.m <- 314917000000 #square kilometers
+NM.area.m <- 314917000000 #square meters
 
 NM.null <- NM.recs/NM.area # 1.11136 records per square kilometer expected
 NM.null.m <- NM.recs/NM.area.m
@@ -79,11 +76,14 @@ NM.null.m <- NM.recs/NM.area.m
 
 
 #Add spatial data columns
-Each of the next iterative chunks loads a new environmental dataset that is open access and publically available. The script was written to facilitate research in the southwestern United States of America (New Mexico specifically), but different raster and vector data for other regions could also be used. 
+Each of the next iterative chunks loads a new environmental dataset that is open access and publically available. The script was written to facilitate research in the southwestern United States of America (New Mexico specifically), but different raster and vector data for other regions could also be used.
+
 
 ##Shapefiles 
+All of the layers in our biotic and sociopolitical categories are loaded as shapefile (i.e. vector formatted geospatial resources). Later we will read the raster formatted abiotic layers, which requires a different work flow. 
 
 ###Counties
+[The FIPS codes for states and counties in the United States can be found here](https://transition.fcc.gov/oet/info/maps/census/fips/fips.txt)
 ```{r}
 ###Load shapefile of study area (in our case, New Mexico)
 bb.nm<-tigris::tracts(state = 'NM')
