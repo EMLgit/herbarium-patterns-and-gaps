@@ -2,50 +2,27 @@
 title: "GitHub UNM Herbarium project"
 author: "emlombardi"
 date: "2023-05-15"
-output: html_document
-editor_options: 
-  markdown: 
+output:
+  pdf_document: default
+  html_document: default
+editor_options:
+  markdown:
     wrap: 72
 ---
 
 ## Introduction
 
-####  CHECKING TO SEE IF IT PUSHES TO GITKRAKEN
+This file details the initial steps that should be taken when assessing patterns of regional botanical collections. It was written by EMLombardi as part of the UNM herbarium's analysis of spatial, temporal and taxonomic biases in botanical collections made from the state of New Mexico.
 
-This file details the initial steps that should be taken when assessing
-patterns of regional botanical collections. It was written by EMLombardi
-as part of the UNM herbarium's analysis of spatial, temporal and
-taxonomic biases in botanical collections made from the state of New
-Mexico.
+Researchers should decide which data aggregators are most suitable for their region or taxonomic interests. Here, we combine data from the
+global biodiversity aggregator GBIF with data from a regional herbarium consortium, SEINet. Note that many regional or taxonomically-focused databases, including SEINet, push their records to GBIF. Not all do, however, and some collections in a specific region may be housed in non-consortium herbaria and are therefore difficult to find without more global record aggregation. That said, it is important to consider the sources of records, the type of information you need for your analysis and the best ways to identify messy, duplicate or incorrect collections.
 
-Researchers should decide which data aggregators are most suitable for
-their region or taxonomic interests. Here, we combine data from the
-global biodiversity aggregator GBIF with data from a regional herbarium
-consortium, SEINet. Note that many regional or taxonomically-focused
-databases, including SEINet, push their records to GBIF. Not all do,
-however, and some collections in a specific region may be housed in
-non-consortium herbaria and are therefore difficult to find without more
-global record aggregation. That said, it is important to consider the
-sources of records, the type of information you need for your analysis
-and the best ways to identify messy, duplicate or incorrect collections.
+Here we require that all records have geographic coordinates (i.e. have been georeferenced). There are many more records that have yet to be georeferenced, and some researcher may choose to use all records regardless of spatial data or accuracy. We also require records to have, at minimum, genus-level taxonomic data and a year of collection. All decisions regarding non-systemic data cleaning are found in the code chunk '5. Identify and manage non-systemic issues'
 
-Here we require that all records have geographic coordinates (i.e. have
-been georeferenced). There are many more records that have yet to be
-georeferenced, and some researcher may choose to use all records
-regardless of spatial data or accuracy. We also require records to have,
-at minimum, genus-level taxonomic data and a year of collection. All
-decisions regarding non-systemic data cleaning are found in the CHUNK
-NUMBER.
-
-Systemic biases also exist in biodiveristy data across scales and
-taxonomic groups. In particular, there are clear spatial and taxonomic
-issues that must be addressed by researchers seeking to gain insight
-from large collection datasets. There are many ways to harmonize the
-taxonomic data (see Grenie paper), and numerous packages and papers
-describe the causes and consequences of spatial biases (Zizka et al,
-etc). Our decisions regarding spatial cleaning are detailed in CHUNK
-NUMBER, and the taxonomic cleaning steps are some of the first lines of
-code below. [ this might need to be updated depending on what we do ]
+Systemic biases also exist in biodiveristy data across scales and taxonomic groups. In particular, there are clear spatial and taxonomic
+issues that must be addressed by researchers seeking to gain insight from large collection datasets. There are many ways to harmonize the
+taxonomic data (see Grenie paper), and numerous packages and papers describe the causes and consequences of spatial biases (Zizka et al,
+etc). 
 
 ```{r libraries}
 library(dplyr)
@@ -54,14 +31,12 @@ library(stringr)
 library(TNRS)
 library(AOI)
 library(sf)
-library(rgeos)
+# library(rgeos) retired in October 2023
 
 ```
 
 #1. Load Data
-
-Downloaded CSV files from GBIF and SEINet are uploaded to R, and the
-polygon defining the boundary of present-day New Mexico is created.
+Downloaded CSV files from GBIF and SEINet are uploaded to R, and the polygon defining the boundary of present-day New Mexico is created. This is where you will want to load occurrence data downloaded from repositories. Either .txt or .csv extensions should work as long as you read them into R using the correct loading function, as demonstrated below. 
 
 ```{r}
 #Botanical records loaded
@@ -69,24 +44,13 @@ gbif <- read.delim("~/Desktop/Research/UNM/Herbarium collections patterns and ga
 
 seinet <- read.csv("~/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Occurrence Data/SEINet_July20_allRecords.csv", header=TRUE) #465003 records July 2023
 
-
 ```
 
 #2. Taxonomic cleaning and harmonization 
-Note that we have elected to use the package TNRS to harmonize taxonomic information in our dataset.
-There are a few steps we take before harmonizing to clean the string of
-characters (i.e. we remove special characters). We run the cleaned
-scientificName column from GBIF and SEINet through TNRS's harmonization
-function ('TNRS()') separately, and we have chosen to include authority
-information as part of the input. For GBIF, the column scientificName
-already includes authority information. For SEINet, we have to
-concatenate two columns to include this information in a single
-scientificName column.
+Note that we have elected to use the package TNRS to harmonize taxonomic information in our dataset. There are a few steps we take before harmonizing to clean the string of characters (i.e. we remove special characters). We run the cleaned scientificName column from GBIF and SEINet through TNRS's harmonization function ('TNRS()') separately, and we have chosen to include authority information as part of the input. For GBIF, the column scientificName already includes authority information. For SEINet, we have to concatenate two columns to include this information in a single scientificName column.
 
-The developers of the TNRS package recommend that researchers remove any
-records with blank space, NA or NULL values before harmonizing the
-species list. Find more information about this package here:
-<https://github.com/EnquistLab/RTNRS>
+The developers of the TNRS package recommend that researchers remove any records with blank space, NA or NULL values before harmonizing the
+species list. Find more information about this package here: <https://github.com/EnquistLab/RTNRS>
 
 ### Clean input strings
 
@@ -104,14 +68,11 @@ seinet <- seinet %>%
 
 
 #Remove any names with null, blankspace, NA values
-
 gbif <- gbif %>%
   filter(!is.na(scientificName) & scientificName != "" & !is.null(scientificName)) 
 
 seinet <- seinet %>%
   filter(!is.na(scientificName) & scientificName != "" & !is.null(scientificName))
-
-
 ```
 
 ### Run TNRS harmonization
@@ -140,7 +101,6 @@ seinet <- dplyr::left_join(seinet, seinet_tax, by=c('scientificName'='Name_submi
 gbif.na <- gbif %>%
   filter(Accepted_name=="") 
 length(unique(gbif.na$scientificName)) #168 species (882 records) in GBIF didn't harmonize
-
 
 seinet.na <- seinet %>%
   filter(Accepted_name =="") 
@@ -181,8 +141,6 @@ catDupsSeinet <- seinet %>%
 
 #I'm going to keep these for now. 
 
-
-
 ```
 
 ###Align columns between datasets
@@ -214,23 +172,12 @@ cols.unique2<-setdiff(cols.seinet, cols.gbif) #columns only in seinet data frame
 
 ```
 
-###Combine and remove duplicates Before we combine and identify
-duplicates that exist in both SEINet and GBIF we have 261,128 records in
-GBIF and 390,139 records in SEINet.
+###Combine and remove duplicates 
+Before we combine and identify duplicates that exist in both SEINet and GBIF, we have 261,128 records in GBIF and 390,139 records in SEINet.
 
-This second duplicate removal requires the researcher to identify unique
-records. SEINet pushes data to GBIF, but the unique identifiers assigned
-to different records may (or may not) be correct. Also there may be
-multiple specimen for a single plant, so we need to identify duplicate
-records using multiple pieces of information (OR DO WE). We recommend
-that researchers play around with their own data to figure out how best
-to identify duplicates wihtin their combined dataset.
+This second duplicate removal requires the researcher to identify unique records. SEINet pushes data to GBIF, but the unique identifiers assigned to different records may (or may not) be correct. Also there may be multiple specimen for a single plant, so we need to identify duplicate records using multiple pieces of information (OR DO WE). We recommend that researchers play around with their own data to figure out how best to identify duplicates wihtin their combined dataset.
 
-Here we remove all but the first record (in row sequence) that have the
-same catalogNumber, which reduces our full GBIF+SEINet dataframe from
-433,604 records to 264,857 records. This suggests that 168,747 records
-were in both GBIF and SEINet (pushed from SEINet to GBIF). This is fewer
-than the original SEINet data (by a lot) so we might want to re-do this.
+Here we remove all but the first record (in row sequence) that have the same catalogNumber, which reduces our full GBIF+SEINet dataframe from 433,604 records to 264,857 records. This suggests that 168,747 records were in both GBIF and SEINet (pushed from SEINet to GBIF). This is fewer than the original SEINet data (by a lot) so we might want to re-do this.
 
 ```{r}
 #bind the dataframes
@@ -248,18 +195,11 @@ save(dat, seinet_tax, gbif_tax, file="fullDB_TNRSharm_output.RData")
 load(file="fullDB_TNRSharm_output 4.RData")
 ```
 
-#5. Identify and manage non-systematic issues Inconsistencies and
-problems exist within large biodiversity datasets, and not all of these
-can be predicted or cleaned through automation. We demonstrate a few
-steps that were important for our regional analysis, and encourage
-researchers to assess their own botanical records for additional or
-different abberations.
+#4. Identify and manage non-systematic issues 
+Inconsistencies and problems exist within large biodiversity datasets, and not all of these can be predicted or cleaned through automation. We demonstrate a few steps that were important for our regional analysis, and encourage researchers to assess their own botanical records for additional or different abberations.
 
-###State mismatches Identify the records that are problematic in terms
-of listed stateProvince. Mapping this is a good idea; some of these are
-border records with low coordinate precision. We remove ALL records that
-do not have a variation of 'New Mexico' in the stateProvince column, but
-different projects may require different treatment of these records.
+###State mismatches 
+Identify the records that are problematic in terms of listed stateProvince. Mapping this is a good idea; some of these are border records with low coordinate precision. We remove ALL records that do not have a variation of 'New Mexico' in the stateProvince column, but different projects may require different treatment of these records.
 
 ```{r}
 
@@ -275,8 +215,8 @@ dim(dat)
 
 ```
 
-###Remove wrong basis of record 
-There are often records that don't belong, and variations of the main 'preserved specimen' classfication
+###Remove incorrect basis of record 
+There are often records that don't belong, and variations of the main 'preserved specimen' classification should be identified as the only kind of records that we want to consider in our analyses. 
 
 ```{r}
 bor <- table(dat$basisOfRecord)
@@ -284,11 +224,8 @@ dat <- filter(dat, basisOfRecord %in% c("Physical specimen", "Physicalspecimen",
 
 ```
 
-###Temporal impossibilities There are often typos or other issues that
-need to be dealt with. We remove any records with year data suggesting
-that they were collected before 1801 or in the future. We also remove
-records that don't have any year data, which is the coarsest of the
-temporal information we need. \### Temporal 'Date' column
+###Temporal impossibilities 
+There are often typos or other issues that need to be dealt with. We remove any records with year data suggesting that they were collected before 1801 or in the future. We also remove records that don't have any year data, which is the coarsest of the temporal information we need.
 
 ```{r}
 ###Add ordinal date column to nmcol_resolved
@@ -318,8 +255,8 @@ dat <- dat %>% mutate(date.ordinal=lubridate::yday(date))
 
 ```
 
-###Remove probmatic temporal data If there is no year data or impossible
-year data (e.g. in the future) remove those records.
+###Remove probmatic temporal data 
+If there is no year data or impossible year data (e.g. in the future) remove those records.
 
 ```{r}
 dat <- dat %>% filter(!year<1801)%>%filter(!year>2022) %>% filter(!year=="") #14324 records removed. 
@@ -329,22 +266,14 @@ dim(dat) #now 364,481 records with complete and cleaned data
 ```
 
 
-###Taxonomic issues with SEINet database We observed that the phylum
-data from SEINet was incorrect. We only want to look at tracheophyta in
-our analysis, but apparently there are records that are from other
-clades and are incorrectly classified. All problems have
-sourceDB=seinet, so that's where we focus.
+###Taxonomic issues with SEINet database 
+We observed that the phylum data from SEINet was incorrect. We only want to look at Tracheophyta in our analysis, but apparently there are records that are from other clades and are incorrectly classified. All problems have sourceDB=seinet, so that's where we focus.
 
-Here we check the phylum column, then remove any records from
-non-tracheophyta clades. We finally rename the erroneous column
-'seinetTaxDivision' so that the information is retained. If we wanted
-to, we could add a new column with corrected phylum information...but
-it's not really necessary because everything in the dataframe should now
-belong to tracheophyta.
+Here we check the phylum column, then remove any records from non-tracheophyta clades. We finally rename the erroneous column 'seinetTaxDivision' so that the information is retained. If we wanted to, we could add a new column with corrected phylum information...but
+it's not really necessary because everything in the dataframe should now belong to tracheophyta.
 
 ```{r}
 table(dat$phylum) #strange stuff happening here; all issues are from SEINet original data source
-
 
 #remove the data that don't belong in tracheophyta (N=4178 records)
 dat <- dat %>%
@@ -358,14 +287,8 @@ dat <- dat %>%
 
 ```
 
-###Taxonomic issues across taxonomic scale (species, genus, family,
-sub-species) There are some records that are only identified to the
-family level. This is not very helpful. For our analysis, we have chosen
-to remove anything that doesn't have a genus identification, but have
-kept those without species data. It's worth checking to see how many
-records aren't identified to the species level, though; this will be
-important to know for herbarium curators and researchers interested in
-specific taxonomic groups.
+###Taxonomic issues across taxonomic scale (species, genus, family,sub-species) 
+There are some records that are only identified to the family level. This is not very helpful. For our analysis, we have chosen to remove anything that doesn't have a genus identification, but have kept those without species data. It's worth checking to see how many records aren't identified to the species level, though; this will be important to know for herbarium curators and researchers interested in specific taxonomic groups.
 
 ```{r}
 #REMOVE ANY RECORDS THAT DO NOT HAVE PROPER TAXONOMIC INFORMATION 
@@ -404,15 +327,10 @@ dat <- dat %>%
   
 ```
 
-###Institution-associated issues A good place to start looking for
-non-systematic issues is in the occurrenceID column. Those data that do
-not have occurenceID data often have other problems, too (though not
-always!). Take a look.
+###Institution-associated issues 
+A good place to start looking for non-systematic issues is in the occurrenceID column. Those data that do not have occurenceID data often have other problems, too (though not always!). Take a look.
 
-When looking through records, ask which variables you absolutely need to
-have and the minimum requirements for data quality. For our purposes, we
-need correct taxonomic classification to at least the genus level and the
-temporal resolution to year (at worst). There may also be other issues in your particular dataset(s) that require cleaning decisions. 
+When looking through records, ask which variables you absolutely need to have and the minimum requirements for data quality. For our purposes, we need correct taxonomic classification to at least the genus level and the temporal resolution to year (at worst). There may also be other issues in your particular dataset(s) that require cleaning decisions. 
 
 ```{r}
 occ2<- filter(dat, occurrenceID %in% c("")) #this suggests that 87196 records don't have occurrenceID information. Check these for other possible issues
@@ -426,28 +344,12 @@ write.csv(occ2, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collect
 
 ```
 
-#save the cleaned records (includes non-georeferenced) The files you
-save here include all GBIF+SEINet (or other data aggregator) data,
-including those that are not georeferenced. In the next script we will
-address issues in coordinates and georeferencing, which will reduce the
-number of records significantly. Spatial cleaning is a critical step if
-you are interested in any questions about taxonomic richness, spatial
-patterns, ranges/distributions, etc. It's been well-established in the
-literature (see Zizka et al 2019) that coordinate cleaning of large
-biodiversity data is a necessary step for rigorous analyses of species
-distributions, etc.
+#Save all cleaned records (includes non-georeferenced) 
+The files you save here include all GBIF+SEINet (or other data aggregator) data, including those that are not georeferenced. In the next script we will address issues in coordinates and georeferencing, which will reduce the number of records significantly. Spatial cleaning is a critical step if you are interested in any questions about taxonomic richness, spatial patterns, ranges/distributions, etc. It's been well-established in the literature (see Zizka et al 2019) that coordinate cleaning of large biodiversity data is a necessary step for rigorous analyses of species distributions, etc.
 
-We highly recommend cleaning your data spatially, even if it means that
-you are working with far fewer records. Ideally, all natural history
-collections would already be georeferenced; tell your friendly funding
-agency how helpful that would be. Until that day, however, your results
-are dependent on your answer to this question: Do you care about the
-accuracy of the locality from which your data were collected? For most
-cases, the answer should be 'yes', and then you should proceed to
-spatial/coordinate cleaning.
+We highly recommend cleaning your data spatially, even if it means that you are working with far fewer records. Ideally, all natural history collections would already be georeferenced; tell your friendly funding agency how helpful that would be. Until that day, however, your results are dependent on your answer to this question: Do you care about the accuracy of the locality from which your data were collected? For most cases, the answer should be 'yes', and then you should proceed to spatial/coordinate cleaning.
 
-But first: keep all the records that have been cleaned for temporal and
-taxomonic problems!
+But first: keep all the records that have been cleaned for temporal and taxomonic problems! This next chunk produces the data we call 'dat' from here on, and in the supplemental documentation. 
 
 ```{r}
 
