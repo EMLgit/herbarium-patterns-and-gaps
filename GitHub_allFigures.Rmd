@@ -1,0 +1,2303 @@
+---
+title: "Figure_Functions_alllayers"
+author: "emlombardi"
+date: "2023-06-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(plotly)
+#library(webr) #likely delete this package
+library(ggplot2)
+library(dplyr)
+library(khroma)
+library(ggpubr)
+
+```
+
+#Load data and libraries
+
+[[[DESCRIBE]]]
+
+```{r data}
+
+#the stack with the full and geospatial dataframes
+load(file="Data_both-allandgeo.RData") 
+load(file="WorkingDirectory(Nov1).RData")
+#load(file="~/Downloads/Gaps_figsEnvironment.RData")
+load(file="basicDataStack_simple_withNMRPlist.Rdata")
+load(file="basicDataStack_simple 2.Rdata")
+
+#while working through things, it may be good to save the full working environment every now and then
+save.image(file='/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/GitHub_allFigures_WorkingEnvironment.RData')
+
+
+```
+
+
+#Taxonomic trends (all records)
+These are the overall taxonomic trends for all data (not just those that are georeferenced)
+
+```{r}
+fams <- dat %>%
+  group_by(Accepted_family) %>%
+  filter(!Accepted_family=="") %>%
+  count(sort=TRUE)
+
+gens <- dat %>%
+  group_by(Genus_matched) %>%
+  filter(!Genus_matched=="") %>%
+  count(sort=TRUE)
+
+spp <- dat %>%
+  group_by(Accepted_name) %>%
+  filter(!Accepted_name=="") %>%
+  count(sort=TRUE)
+
+write.csv(spp, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Species_basic.csv", row.names = TRUE)
+
+##How many unique families, genera and species are in the database?
+length(unique(fams$Accepted_family)) #167
+length(unique(gens$Genus_matched)) #1688
+length(unique(spp$Accepted_name)) #7210
+
+
+```
+
+###Pie charts
+```{r}
+#look more closely at the synonyms
+donut2 = dat %>%  #21,279 of all records were taxonomic synonyms
+  filter(Taxonomic_status=="Accepted") %>%
+  filter(!Accepted_name=="", !Taxonomic_status=="Invalid") %>%
+  group_by(Accepted_family, Genus_matched) %>% 
+  tally(sort=TRUE)
+
+# Create an interactive donut chart with Plotly!
+pie1<-plot_ly(donut2, labels = ~Accepted_family, values = ~n, type = 'pie',
+             hole = 0.45, textposition = "inside",
+             textinfo = "label+count",
+             marker = list(colors = c("#FFA07A", "#87CEFA", "#32CD32", "#DA70D6", "#FFD700"),
+                           line = list(color = "#FFFFFF", width = .25)))
+pie1
+
+# Same but without the labels in this version
+pie2<-plot_ly(donut2, labels = ~Accepted_family, values = ~n, type = 'pie',
+             hole = 0.45, textposition = "inside",
+             textinfo = "none",
+             marker = list(colors = c("#FFA07A", "#87CEFA", "#32CD32", "#DA70D6", "#FFD700"),
+                           line = list(color = "#FFFFFF", width = .25)))
+pie2
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/familyPiePlot.png", pie1, width = 10, height = 5, dpi = 300)
+
+plotly_IMAGE(pie1, format = "png", out_file = "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/familyPiePlot2.png")
+
+
+```
+
+
+
+#Taxonomic trends 
+Also the singly collected taxa dataframe is made here. 
+
+```{r}
+#species diversity
+spp <- dat %>%
+  group_by(Accepted_name) %>%
+  filter(!Accepted_name == "") %>% #there are 2398 records without species epithet 
+  dplyr::summarise(count = n())
+
+genera <- dat %>%
+  group_by(Genus_matched) %>%
+  filter(!Genus_matched == "") %>% 
+  dplyr::summarise(count = n())
+
+hist(log(spp$count), breaks=7210)
+summary(spp$count)
+
+top15<-dat %>% 
+  add_count(Accepted_name) %>% 
+  filter(n %in% tail(sort(unique(n)), 15)) %>% 
+  filter(!Accepted_name == "") %>%
+  arrange(desc(n)) #table of all records for the ten best represented species
+top15list<-c(top15$Accepted_name)
+
+ggplot(top15, aes(Accepted_name))+
+  geom_bar() +
+  theme_pubclean()
+
+# Compute the frequency
+fig1 <- dat %>%
+  group_by(Accepted_name)%>%
+  filter(!Accepted_name == "") %>%
+  tally(sort=TRUE)
+fig1
+
+fig2<- dat %>%
+  group_by(Genus_matched) %>%
+  filter(!Genus_matched == "") %>%
+  tally(sort=TRUE)
+
+
+# Create the bar plot. Use theme_pubclean() [in ggpubr]
+f1 <-ggplot(data = fig1, aes(n)) +
+  geom_histogram(color = "darkslategrey", stat="count", linewidth=3) +
+  scale_x_log10()+ #log the count
+  labs(x = "Collections per species", y = "Number of taxa (log scale of count)") +
+  theme(text = element_text(size = 12), 
+              axis.text = element_text(size = 12))
+f1
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/logScale_noSpp.png", f1, width = 10, height = 5, dpi = 300)
+
+
+singles<-fig1%>%filter(n=="1") #1436 taxa with a single collection
+#singles <- fig2 %>% filter(n=="1") #genus level single collections. 253 singly collected genera. 
+
+singlesDF.env <- env.v %>%
+  inner_join(singles, by="Accepted_name")
+
+write.csv(singlesDF.env, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/singleRecords_enviro.csv")
+
+singlesDF.dat <- dat %>%
+  inner_join(singles, by="Accepted_name")
+
+write.csv(singlesDF.dat, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/singleRecords_All.csv")
+
+print(fig1)
+summary(fig1)
+
+#Try a boxplot to see things a bit differently. 
+f1b<-ggplot(fig1, aes(x = factor(1), y = n)) +
+  geom_boxplot(width = 0.7, fill = "white") +
+  labs(x = NULL)   # Remove x axis label
+f1b
+
+
+#go up a taxonomic level
+fig1c <- dat %>%filter(!Genus_matched=="")%>%
+  group_by(Genus_matched)%>%tally(sort=TRUE)
+fig1c
+
+f1c<-ggplot(data = fig1c, aes(n)) +
+  geom_bar(color = "coral4", stat="count", size=1) +
+  scale_x_log10()+ #log the count
+  labs(title = "How many collections do we have per genus? (log transformation)")
+f1c
+
+singles.genus<-fig1c%>%filter(n=="1") #240 genera with only a single collection
+
+#go up a taxonomic level
+figfam <- dat %>%filter(!family=="")%>%
+  group_by(family)%>%tally(sort=TRUE)
+figfam
+
+
+###Look at only those species with more than one collection
+fig1d<-fig1%>%filter(!n=="1") #Only those with 2+ species
+f1d<-ggplot(data = fig1d, aes(n)) +
+  geom_bar(color = "steelblue", stat="count", size=1) +
+  labs(title = "How many species have multiple collections?")
+f1d
+
+
+```
+
+
+
+#Temporal trends
+
+##all records (`dat`)
+
+```{r}
+
+#Calculate the percent of total collections made each year
+
+fig1<-dat %>%group_by(year)%>%tally(sort=TRUE)%>%na.omit()
+mean(fig1$n)
+IQR(fig1$n)
+
+time <- count(dat, year, Accepted_species, order)  %>% group_by(n) %>% filter(!year<1800)
+
+f2a<-ggplot(data = time, aes(x = year, y = n)) +
+    geom_line()+
+  labs(title="Collected species by year since 1800")
+f2a
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/collectionssince1800.png", f2a, width = 6, height = 4, dpi = 300)
+
+
+```
+###records by month
+
+```{r}
+library(lubridate)
+
+data_tidy$Month <- month(data_tidy$date)
+
+august <- data_tidy %>%
+  group_by(Month, year) %>%
+  tally(sort=TRUE) %>%
+  filter(Month=="8")
+
+mean(august$n)
+
+```
+
+###records over time
+```{r}
+time <- count(dat, year, Accepted_name, class)  %>% 
+  filter(!class=="") %>%
+  filter(!year==200) %>%
+  filter(!year=="193") %>%
+  group_by(year) 
+
+time$year <- as.integer(time$year)
+
+
+timefig<-ggplot(data = time) +
+  geom_bar(aes(x = year, y = n, fill = class),
+           position = 'stack', stat = 'identity') +
+  #labs(x = 'Time', y = 'Number of records collected', fill = 'Taxonomic order',title = 'Botanical collections made over time (1800-2022)') +
+  geom_hline(yintercept=mean(fig1$n), linetype="dashed", color = "darkslategrey", size=1) + #this line adds a horizontal mean bar at mean # collections/year since 1800
+  labs(x=NULL, y=NULL, fill="Taxonomic class")+
+  theme(panel.background = element_blank(),
+        legend.position = "none") +
+  #scale_color_batlow(discrete=TRUE, aesthetics = "fill", reverse=TRUE) +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=TRUE) +
+  #scale_fill_iridescent(discrete=TRUE, reverse=FALSE) +
+  theme_bw()
+timefig
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/recordsovertime.png", timefig, width = 8, height = 4, units="in", dpi = 300)
+
+
+
+###Monsoon years figure
+dat$year <- as.integer(dat$year) 
+ppt.noaa <- read.csv("NOAA_precipNM_annualdata.csv", header=TRUE) #NOAA precipitation data for annual
+
+dat <- dat %>%
+  left_join(ppt.noaa, by="year") %>%
+  select(-ppt.var) %>%
+  rename(noaa.ppt = binary.ppt) %>%
+  rename(noaa.ppt.inches = ppt.inches)
+
+
+wet <- ppt.noaa %>%
+  filter(binary.ppt == "1") %>%
+  mutate(as.numeric(year))
+
+dry <- ppt.noaa %>%
+  filter(binary.ppt == "0")
+
+
+wet.df <- subset(dat, subset=year %in% wet$year)
+dry.df <- subset(dat, subset=year %in% dry$year)
+
+#Compare just the number of records collected in wet and dry years
+nrow(wet.df) #179,616 records collected in wet years
+nrow(dry.df) #155,950 records collected in dry years
+
+nrow(wet.df)/length(wet$year) #average of 2897 records/year in wet years
+nrow(dry.df)/length(dry$year) #average of 2363 records/year in dry years
+
+try <- rbind(nrow(wet.df)/length(wet$year), nrow(dry.df)/length(dry$year))
+chisq.test(try)
+
+#Just a basic barplot, maybe?
+monsoon.bar<-ggplot(dat, aes(x=noaa.ppt)) +
+  geom_bar(fill="darkslategrey") +
+  theme_bw()
+
+
+##Statistics
+
+tab=with(dat,table(noaa.ppt))
+chisq.test(tab)
+
+
+d<-dat %>% count(noaa.ppt) %>% 
+  spread(noaa.ppt,n) %>% 
+  chisq.test() %>% 
+  glance()
+
+
+e <- dat %>%
+  group_by(year, noaa.ppt) %>%
+  tally(sort=TRUE)
+t.test(n ~ noaa.ppt, data = e) #this suggests there is no difference!
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/binaryMonsoon_barplot.png", monsoon.bar, width = 4, height = 6, dpi = 300)
+
+
+
+
+###Ordinal time figure
+time <-count(dat, date.ordinal) %>% group_by(n) %>% na.omit()
+
+ordinaltimefig<-ggplot(data = time, aes(x = date.ordinal, y = n)) +
+    geom_line(color = "darkslategrey")+
+    #geom_vline(xintercept = 227) +
+    labs(x=NULL, y=NULL) +
+    theme_bw()
+ordinaltimefig
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ordinaltime.png", ordinaltimefig, width = 10, height = 2, dpi = 300)
+
+
+
+#create panel with ordinaltimefig and timefig
+library(patchwork)
+time.bottom <- ordinaltimefig + monsoon.bar +
+  plot_layout(widths = c(5,2))
+time.panel<- timefig / time.bottom + 
+  plot_layout(heights = c(4, 2)) &
+  theme_minimal()
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/timepanelplot.png", time.panel, width = 6, height = 4, dpi = 300)
+
+
+```
+
+
+###Temporal gaps in NM compared to region
+In this chunk, I'll create a new figure and analysis to compare the number of records collected from New Mexico in our analysis to the number of records collected in surrounding states over the same amount of time (1800-2022). The surrounding area will only be GBIF herbarium sheets (no spatial cleaning, basic other cleaning). I'll calculate the #records and divide by square kilometers for each year, then plot both regional and NM sheets/area trends since 1800. This is an attempt to actually figure out when there have been quantifiable temporal gaps. 
+
+```{r}
+library(rgbif)
+
+#Calculate area (square kilometers) in surroundings states. Included states are: Utah, Arizona, Texas, Oklahoma, Kansas and Colorado
+#state areas from the US Census bureau https://www.census.gov/geographies/reference-files/2010/geo/state-area.html
+
+AZ <- 295234
+CO <- 269601
+KA <- 213100 #we're going to get rid of Kansas eventually
+OK <- 181037
+TX <- 695662
+UT <- 219882
+
+reg.area <- AZ+CO+KA+OK+TX+UT #total regional area in square kilometers
+reg.recs <- 2989462
+
+regTable<- data.frame(stateProvince=c("arizona", "colorado", "kansas", "oklahoma", "texas", "utah"), stateArea=c(AZ, CO, KA, OK, TX, UT))
+
+
+#GBIF data download (it's huge)
+#d <- occ_download_get('0034652-231002084531237') %>%occ_download_import()
+d <- occ_download_get('0034960-231002084531237') %>% occ_download_import() #this one includes GBIF data for New Mexico that can be treated in the same way as the other states
+
+
+#subset to grab the new NM records (not our proper dataset, but more comparable)
+NM.area <- 314917 #census bureau area for New Mexico
+nm.recs <- regional.df %>%
+  filter(stateProvince=="New Mexico")
+
+
+#grab only the columns I need with only the states I need
+try <- regional.df %>%
+  filter(!stateProvince=="new mexico") %>%
+  filter(!stateProvince == "idaho")
+
+regional.df <- try
+
+
+
+
+nm.time <- nm.recs %>%
+  group_by(year) %>%
+  tally() %>%
+  mutate(recsNM = n/NM)
+
+#Calculate the number of records made regionally in each year
+reg.time <- regional.df %>%
+  group_by(year) %>%
+  tally()
+
+#add column that calculates the number of records collected given total regional area
+reg.time <- reg.time %>%
+  mutate(recsTime = n/reg.area) %>%
+  mutate(recsSD = sd(recsTime))
+plot(reg.time$recsTime ~ reg.time$year)
+
+
+####NOW compare to NM recs/area over time
+
+
+###PLOT
+p <- ggplot(nm.time, aes(x = year, y = recsNM)) +
+  geom_line() +
+  labs(x = "Time", y = "NM collections/km2 since 1800")
+
+(p<-ggplot() +
+  geom_line(data=reg.time, aes(x=year, y=recsTime), color="darkslategray", alpha=.6) +
+  geom_line(data=nm.time, aes(x=year, y=recsNM), color="#E8601C") +
+  labs(x="Time", y="Collections per kilometers squares") +
+  theme_bw()
+)
+
+#Also look at the overall difference in records from NM compared the region
+reg.recs/reg.area #1.594791 sheets/km2
+nrow(nm.recs)/NM #.9380408 sheets/km2
+
+#####Break it down to individual neighboring states
+states.time <- regional.df %>% 
+  group_by(year, stateProvince) %>%
+  filter(!stateProvince=="Idaho") %>%
+  filter(!stateProvince=="kansas") %>%
+  tally() %>%
+  left_join(regTable, by="stateProvince") %>%
+  mutate(recsTime = n/stateArea)
+
+
+(q<-ggplot() +
+  geom_line(data=states.time, aes(x=year, y=recsTime, col=stateProvince), alpha=.4) +
+  scale_fill_smoothrainbow(discrete=TRUE) +
+  geom_line(data=nm.time, aes(x=year, y=recsNM), color="darkslategrey") +
+  labs(x="Time", y="Collections per kilometers squared", title="Neighboring states + Kansas") +
+  theme_bw()
+)
+
+#If you just want the other states to be grey
+q <- q +
+  scale_color_manual(values = c("darkslategrey", "darkslategrey", "darkslategrey", "darkslategrey", "darkslategrey", "darkslategrey", "darkslategrey", "darkslategrey"))
+
+q <- q + 
+  scale_color_smoothrainbow(discrete=TRUE)
+
+
+
+#Save different versions
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/TemporalGap_regionalCollsperArea_WITHKansas.png", q, width = 6, height = 4, dpi = 300)
+
+
+
+###smooth the distributions
+
+t<- ggplot() +
+  geom_smooth(data=reg.time, aes(x=year, y=recsTime), color="darkslategrey") +
+  geom_smooth(data=nm.time, aes(x=year, y=recsNM), color="#E8601C") +
+  labs(x="Time", y="Collections per kilometers squared") +
+  theme_bw()
+
+#Save different versions
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/TemporalGap_regionalCollsperArea_version3.png", t, width = 6, height = 4, dpi = 300)
+
+
+####Stats
+mean(nm.time$n)
+mean(states.time$n)
+wilcox.test(nm.time$n, states.time$n) #p-value=0.01349. Sig diff for total number of records over time
+
+mean(nm.time$recsNM)
+mean(states.time$recsTime)
+wilcox.test(nm.time$recsNM, states.time$recsTime) #p-value= 0.003598 Sig diff for #recs/km2
+
+
+
+
+
+try<-regional.df %>%
+  filter(!stateProvince=="kansas") %>%
+  group_by(stateProvince) %>%
+  tally()
+  
+```
+
+#Spatial trends
+
+###Basic map 
+These are the components necessary for figure 1
+
+```{r}
+library(terra)
+library(maps)
+library(sf)
+library(ggplot2)
+library(ggmap)
+library(ggalt)
+#library(ggsn) not available for current R version
+library(ggspatial)
+
+
+#North America map
+
+#prepare bounding box for north america base map
+north_america_bbox <- c(-127, 14, -52, 55)
+
+# Set up the Molleweide projection
+target_crs <- st_crs("+proj=moll +x_0=0 +y_0=0 +lat_0=0 +lon_0=133")
+
+
+if (require("maps")) {
+usa <- map_data("usa", interior=FALSE)
+nm <- map_data("state", region="new mexico")
+canada <- map_data("world", region="Canada")
+mexico <- map_data("world", region="Mexico")
+alaska <- map_data("world", region="USA:Alaska")
+alaska <-subset(alaska,long<0) #drop the Aleutian islands
+
+# Prepare a map of USA
+NAmap <- ggplot() + geom_polygon(data = usa, 
+                                 aes(x=long, y = lat, group = group), 
+                                 fill = "white", 
+                                 color="black", 
+                                 size=.4) +
+    geom_polygon(data = canada, aes(x=long, y = lat, group = group), 
+                 fill = "white", color="black", linewidth=.1) + 
+    geom_polygon(data = mexico, aes(x=long, y = lat, group = group), 
+                 fill = "white", color="black", linewidth=.4) +
+    geom_polygon(data = alaska, aes(x=long, y = lat, group = group), 
+                 fill = "white", color="black", linewidth=.05) +
+    geom_polygon(data = nm, aes(x=long, y = lat, group = group), fill = "black", color = "black", size=.3, alpha=.7) +
+    #coord_sf(xlim = c(-125, -70),  ylim = c(20, 52), crs = st_crs(4326), datum = st_crs(4326)) + 
+    coord_sf(xlim = c(-125, -100),  ylim = c(23, 45), crs = st_crs(4326), datum = st_crs(4326)) + 
+    labs(x = "Longitude", 
+         y = "Latitude") +
+    annotation_north_arrow(location = "bl", which_north = "true", style = north_arrow_fancy_orienteering,
+                         pad_x = unit(0.25, "in"), pad_y = unit(0.25, "in")) +
+    annotation_scale(location = 'bl', width_hint = 0.15) +
+    theme_bw() 
+
+# Plot it in cartesian coordinates
+NAmap 
+  
+}
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/NorthAmerica_Basic_Fig1.png", NAmap, width = 6, height = 4, dpi = 300)
+
+
+
+
+
+
+###New Mexico part of the map
+install.packages(tigris)
+library(tigris)
+
+####Load shapefile of primary roads from 2019 TIGRIS
+#switch off spherical geometry
+sf::sf_use_s2(FALSE)
+roads <- st_read("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Environmental Data/Layers to be used/tl_2019_us_primaryroads/tl_2019_us_primaryroads.shp", crs=4326)
+
+#Calculate area
+roads <- st_intersection(roads, aoi)
+plot(roads)
+
+#make sf object
+roads<- st_as_sf(roads, crs=4326)
+roadMap<-ggplot() + 
+  geom_sf(data = aoi$geometry, color="lightyellow", pch="slategrey") +
+  geom_sf(data= env.map$geometry, color="turquoise4", alpha=.02, cex=.3) +
+  geom_sf(data = roads$geometry, color="goldenrod") +
+  scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+
+
+
+```
+
+###Ecoreg3 ad ecoreg4
+```{r}
+##Ecoreg3
+eco1 <- env.v %>%
+  filter(!ecoreg3=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('ecoreg3.area'), as.numeric) %>%
+  group_by(ecoreg3, ecoreg3.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+eco3.hist<-ggplot(eco1, aes(x=as.numeric(year), color=ecoreg3)) +
+  geom_freqpoly(binwidth=5, alpha=0.8) +
+  scale_fill_smoothrainbow(discrete=TRUE) +
+  theme(legend.position = "right") 
+eco3.hist
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ecoreg3_historical.png", eco3.hist, width = 6, height = 4, dpi = 300)
+
+
+#Ecoreg4
+eco2 <- env.v %>%
+  filter(!ecoreg4=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('ecoreg4.area'), as.numeric) %>%
+  group_by(ecoreg4, ecoreg4.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+eco4.hist<-ggplot(eco2, aes(x=as.numeric(year), color=ecoreg4)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  scale_fill_smoothrainbow(discrete=TRUE) +
+  theme(legend.position = "none") 
+eco4.hist
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ecoreg4_historical.png", eco4.hist, width = 14, height = 12, dpi = 300)
+
+
+```
+
+###SWbiotic communities
+```{r}
+##SW biotic communities
+swbio <- env.v %>%
+  filter(!swbiocomm=="") %>%
+  #filter(!year>2023) %>%
+  #filter(!year <= 1799) %>%
+  mutate_at(c('swbio.area'), as.numeric) %>%
+  group_by(swbiocomm, swbio.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+swbio.hist<-ggplot(swbio, aes(x=as.numeric(year), color=swbiocomm)) +
+  geom_freqpoly(binwidth=10, alpha=0.8, linewidth=1) +
+  #scale_colour_muted() +
+  theme(legend.position = "right") +
+  labs(x=NULL, y=NULL) +
+   #scale_color_lajolla(discrete=TRUE, aesthetics = "fill", reverse=FALSE) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+
+swbio.hist <- swbio.hist + 
+  theme(axis.text.x = element_blank(), 
+                 legend.position = "none"
+                 )
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbio_historical.png", swbio.hist, width = 14, height = 12, dpi = 300)
+
+
+
+```
+
+
+
+###Physiographic areas
+```{r}
+physio <- env.v %>%
+  filter(!physio=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('physio.area'), as.numeric) %>%
+  group_by(physio, physio.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+physio.hist<-ggplot(physio, aes(x=as.numeric(year), color=physio)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  #scale_colour_muted() +
+  theme(legend.position = "right") 
+physio.hist
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/physio_historical.png", physio.hist, width = 12, height = 10, dpi = 300)
+
+```
+
+
+###Geologic areas
+```{r}
+geo <- env.v %>%
+  filter(!geologic=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('georeg.area'), as.numeric) %>%
+  group_by(geologic, georeg.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+geo.hist<-ggplot(geo, aes(x=as.numeric(year), color=geologic)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  #scale_colour_muted() +
+  theme(legend.position = "right") 
+geo.hist
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/geological_historical.png", geo.hist, width = 12, height = 10, dpi = 300)
+
+
+```
+
+###Ownership
+```{r}
+own <- env.v %>%
+  filter(!ownership=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('own.area'), as.numeric) %>%
+  group_by(ownership, own.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+own.hist<-ggplot(own, aes(x=as.numeric(year), color=ownership)) +
+  geom_freqpoly(binwidth=10, alpha=0.8, linewidth=1) +
+   theme(legend.position = "right") +
+  labs(x=NULL, y=NULL) +
+   #scale_color_lajolla(discrete=TRUE, aesthetics = "fill", reverse=FALSE) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+own.hist
+
+
+own.hist <- own.hist + 
+  theme(
+                 legend.position = "none"
+                 )
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ownership_noLabels_own1.png", own.hist, width = 12, height = 10, dpi = 300)
+
+
+```
+
+
+###Protection
+```{r}
+protect <- env.v %>%
+  filter(!protection=="") %>%
+  #filter(!protection=="unprotected") %>% #remove this line if you want to include ALL records (not just the small fraction here)
+  filter(!year>2023) %>%
+  mutate_at(c('acec.area'), as.numeric) %>%
+  group_by(protection, acec.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+protect.hist<-ggplot(protect, aes(x=as.numeric(year), color=protection)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  #scale_colour_muted() +
+  theme(legend.position = "bottom") 
+protect.hist
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/protection_historical.png", protect.hist, width = 14, height = 16, dpi = 300)
+
+
+```
+
+
+
+###Temperature
+```{r}
+temp <- env.v %>%
+  filter(!temp.bin=="") %>%
+  filter(!year>2023) %>%
+  #mutate_at(c('georeg.area'), as.numeric) %>%
+  group_by(temp.bin, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+temp.hist<-ggplot(temp, aes(x=as.numeric(year), color=temp.bin)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  #scale_colour_muted() +
+  theme(legend.position = "right") 
+temp.hist
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/temperature_historical.png", temp.hist, width = 14, height = 12, dpi = 300)
+
+
+```
+
+###Precipitation
+```{r}
+precip <- env.v %>%
+  filter(!ppt.bin=="") %>%
+  filter(!year>2023) %>%
+  #mutate_at(c('georeg.area'), as.numeric) %>%
+  group_by(ppt.bin, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+ppt.hist<-ggplot(precip, aes(x=as.numeric(year), color=ppt.bin)) +
+  geom_freqpoly(binwidth=10, alpha=0.8) +
+  #scale_colour_muted() +
+  theme(legend.position = "right") 
+ppt.hist
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ppt_historical.png", ppt.hist, width = 14, height = 12, dpi = 300)
+
+
+```
+
+###Elevation
+```{r}
+elev <- env.v %>%
+  filter(!elev.bin=="") %>%
+  filter(!year>2023) %>%
+  #mutate_at(c('georeg.area'), as.numeric) %>%
+  group_by(elev.bin, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+
+
+elev.hist<-ggplot(elev, aes(x=as.numeric(year), color=elev.bin)) +
+  geom_freqpoly(binwidth=10, alpha=0.8, linewidth=1) +
+   theme(legend.position = "right") +
+  labs(x=NULL, y=NULL) +
+   #scale_color_lajolla(discrete=TRUE, aesthetics = "fill", reverse=FALSE) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw() 
+elev.hist
+
+elev.hist <- elev.hist + 
+  theme(
+    legend.position = "none"
+    )
+
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/elevation_historical.png", elev.hist, width = 14, height = 12, dpi = 300)
+
+
+```
+
+#Category over time FUNCTION
+
+```{r}
+# Function to create bar plots of count occurrences
+data=env.v
+column="ecoreg3"
+cat.sm <- c("physio", "geologic", "ecoreg4", "ecoreg3", "ownership", "swbiocomm", "protection")
+area <- c("physio.area", "georeg.area", "ecoreg3.area", "ecoreg4.area", "own.area", "swbio.area", "acec.area")
+
+cat <- c("physio", "geologic", "ecoreg4", "ecoreg3", "ownership", "swbiocomm", "protection", "temp.bin", "ppt.bin", "elev.bin")
+
+
+###NEXT: loop so that I can just run one and it produces all of them
+
+
+CatHistoricalFunction <- function(data, column) {
+  
+  result <<- data %>%
+    group_by(data[[column]], year) %>%
+    rename(category = `data[[column]]`) %>%
+    summarise(cnt=n())
+
+  
+  p <- ggplot(result, aes(x = as.numeric(year), color = category)) +
+    geom_freqpoly(binwidth = 10, alpha = 0.8) +
+    theme(legend.position = "bottom") +
+    theme(legend.position = "right") +
+    labs(x=NULL, y=NULL) +
+    scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(text=element_text(size=16)) +
+    theme_bw() 
+  
+  
+  return(p)
+}
+
+#Run for all variables
+for (i in 1:length(cat)) {
+  variable_name <- cat[i]
+  plot <- CatHistoricalFunction(data, variable_name)
+  ggsave(filename = paste0("Cat_plot_", variable_name, ".png"), plot = plot, width = 6, height = 4, dpi = 300)
+}
+
+
+#run for a single variable 
+eco4catplot <- CatHistoricalFunction(env.v, "ecoreg4")
+
+eco4catplot <- elev.bar + theme(
+                 legend.position = "bottom"
+                 )
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/eco3_countbarplot.png", eco3.bar, width = 8, height = 6, dpi = 300)
+
+
+```
+
+#Barplot (Basic)
+Try writing function that will make a simple barplot for each of the 
+
+```{r}
+# Function to create bar plots of count occurrences
+data=env.v
+column= "elev.bin"
+cat.sm <- c("physio", "geologic", "ecoreg4", "ecoreg3", "ownership", "swbiocomm", "protection")
+area <- c("physio.area", "georeg.area", "ecoreg.area", "ecoreg.area", "own.area", "swbio.area", "acec.area")
+
+cat <- c("physio", "geologic", "ecoreg4", "ecoreg3", "ownership", "swbiocomm", "protection", "temp.bin", "ppt.bin", "elev.bin")
+cat <- c("temp.bin", "ppt.bin", "elev.bin")
+
+
+###NEXT: loop so that I can just run one and it produces all of them
+
+
+data= env.v
+column = c("ecoreg3")
+createBarPlot <- function(data, column) {
+  # Count occurrences of each category
+  counts <- table(data[[column]])
+
+  
+  # Convert counts to a data frame
+  counts_df <- data.frame(categories = names(counts), count = as.numeric(counts))
+  
+  # Create bar plot using ggplot2
+  temp <<- ggplot(counts_df, aes(x=reorder(categories, -count), y = count, fill=factor(categories)
+)) +
+    geom_bar(stat = "identity") +
+    labs(title = NULL, x="Category", y = "Number of records", size=10) +
+    theme(panel.background = element_blank()) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8)) +
+    theme(axis.text.y = element_text(size=8))+
+    theme(axis.text = element_text(size=8)) +
+    scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(legend.position = "none") 
+
+
+    
+  temp
+}
+
+#Run for all of the categories and save in folder
+for (i in 1:length(cat)){
+  createBarPlot(data, cat[i])
+  ggsave(temp, file=paste0("barplot_", cat[i], ".png"), width = 8, height = 6, dpi = 300)
+}
+
+
+#create panels for each variables to be used later: IN SCRIPT 4 for the abiotic variables. 
+# elev.bar <- createBarPlot(data, "elev.bin") 
+# ppt.bar <- createBarPlot(data, "ppt.bin")
+# temp.bar <- createBarPlot(data, "temp.bin")
+
+physio.bar <- createBarPlot(data, "physio")
+geol.bar <- createBarPlot(data, "geologic")
+ecoreg3.bar <- createBarPlot(data, "ecoreg3")
+ecoreg4.bar <- createBarPlot(data, "ecoreg4")
+own.bar <- createBarPlot(data, "ownership")
+swbio.bar <- createBarPlot(data, "ownership")
+protect.bar <- createBarPlot(env.v2, "protection")
+
+
+
+
+###Aesthetics and specific lines to use depending on variables type (i.e. PRISM and elevation data require x axis to be reordered)
+
+#The X axis for most of the plots
+ x=reorder(categories, -count),
+
+ ###ABIOTIC 
+ #the X axis for abiotic ppt, temp and elev
+ x=factor(categories, level=c("Very Low", "Low", "Somewhat Low", "Moderately Low", "Moderate", "Moderately High", "High", "Somewhat High", "Very High", "Extremely High"))
+
+color=reorder(elev.bin, bin)
+ 
+ 
+protect.bar1 <- protect.bar + theme(axis.text.x=element_blank(),
+                 legend.position = "right"
+                 )
+
+##PRotection and other categorical issues
+env.v2<- env.v %>%
+  filter(!protection == "unprotected") 
+
+#Now slice to include only the top 10 best collected ACEC areas
+  top.acec <- env.v2 %>%
+  group_by(protection) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count)) %>%
+  slice(1:15)
+  
+  env.v2 <- env.v %>%
+  filter(protection %in% top.acec$protection) #6,247 records from protected areas in NM
+  
+
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Barplots/barplot_protection_noNAs_TOP10.png", protect.bar1, width = 8, height = 6, dpi = 300)
+
+
+
+
+```
+
+
+#Proportion records/area
+```{r}
+#define cat and area before hand
+tryItOut<- function(data, cat, area){
+for i in length(1:cat){
+  for j in length(1:area){
+temp <- dat_cl %>%
+  filter(!cat[i]=="") %>%
+  filter(!year>2023) %>%
+  mutate_at(c('cat.area[j]'), as.numeric) %>%
+  group_by(ecoreg3, ecoreg.area, year) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = round(cnt / sum(cnt), 3)) %>% 
+  arrange(desc(freq))
+  }
+}
+}
+
+cat2b<-eco2b <- eco2 %>%
+  group_by(ecoreg4) %>%
+  summarise(area=sum(ecoreg.area)) 
+eco2b$cnts <- aggregate(eco2$cnt, list(eco2$ecoreg4), FUN=sum)
+
+
+# Calculate quantiles
+quantiles <- quantile(data$y, probs = c(0, 0.25, 0.5, 0.75, 1))
+
+# Define color palette
+colors <- c("red", "yellow", "green", "blue")
+
+
+
+```
+
+
+
+##Biotic layers
+```{r}
+null2 <- (nrow(dat))/(aoi$land_area)
+
+#ecoreg 3
+eco1b<-env.v %>%
+  group_by(ecoreg3) %>%
+  filter(!ecoreg3=="") %>%
+  summarise(area=(sum(ecoreg3.area))) %>%
+  as.data.frame() 
+#%>%dplyr::select(-geometry) 
+eco1b$cnts <- aggregate(eco1$cnt, list(eco1$ecoreg3), FUN=sum)
+eco1b$area.km <- set_units(eco1b$area, "km^2") #Add a column with area in kilometers squared
+
+eco3.prop<-ggplot(eco1b, aes(x=area.km, y=cnts$x, color=ecoreg3))+
+  geom_abline(intercept = 0, slope = as.numeric((nrow(env.v)/sum(eco1b$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=7.5) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title="Collections across proportional ecoregional space", x="Ecoreg3 area", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm'))
+eco3.prop #number of counts across categories of relative sizes
+
+# Save the plot as a PNG file
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/eco3_proportional.png", eco3.prop, width = 10, height = 6, dpi = 300)
+
+
+
+#ecoreg4
+eco2b<- env.v %>%
+  group_by(ecoreg4) %>%
+  filter(!ecoreg4=="") %>%
+  summarise(area=(sum(ecoreg4.area))) %>%
+  as.data.frame() 
+  #%>%dplyr::select(-geometry) 
+eco2b$cnts <- aggregate(eco2$cnt, list(eco2$ecoreg4), FUN=sum)
+eco2b$area.km <- set_units(eco2b$area, "km^2") #Add a column with area in kilometers squared
+
+##PLOT
+eco4.prop <- ggplot(eco2b, aes(x=area.km, y=cnts$x, color=ecoreg4)) +
+  geom_abline(intercept = 0, slope = as.numeric((nrow(env.v)/sum(eco2b$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=7.5) +
+  geom_text(vjust=-1, label= eco2b$ecoreg4, size=3) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title="Collections across proportional ecoregional space", x="Ecoreg4 area", y="Collections (#)") +
+  theme(legend.position = "none")+
+  theme(legend.key.size = unit(.1, 'cm'))
+eco4.prop 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/eco4_proportional_labeled.png", eco4.prop, width = 10, height = 6, dpi = 300)
+
+
+#swbiotic communities
+
+swbio2<- env.v %>%
+  group_by(swbiocomm) %>%
+  filter(!swbiocomm=="") %>%
+  summarise(area=(sum(swbio.area))) %>%
+  as.data.frame() 
+#%>%dplyr::select(-geometry) 
+swbio2$cnts <- aggregate(swbio$cnt, list(swbio$swbiocomm), FUN=sum)
+swbio2$area.km <- set_units(swbio2$area, "km^2") #Add a column with area in kilometers squared
+
+swbio.prop.labs <- ggplot(swbio2, aes(x=area.km, y=cnts$x, color=swbiocomm)) +
+  geom_abline(intercept = 0, slope = as.numeric((nrow(env.v)/sum(swbio2$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  #geom_text(vjust=-1, label= swbio2$swbiocomm, size=3) +
+  labs(title="Collections across proportional space", x="SW biotic community area", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+swbio.prop.labs 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/swbio_proportional_labeled.png", swbio.prop.labs, width = 14, height = 12, dpi = 300)
+
+#Panel of swbio
+swbio.prop <- ggplot(swbio2, aes(x=area.kms, y=cnts$x, color=COMMUNITY)) +
+  geom_abline(intercept = 0, slope = (nrow(env.v)/sum(swbio2$area.kms)), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=10) +
+  labs(title="Collections across proportional space", x="SW biotic community area (m squared)", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(text=element_text(size=20)) +
+  theme_bw()
+swbio.prop
+
+swbio.prop <- swbio.prop + theme(legend.position = "none")
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbio_proportional.png", swbio.prop, width = 6, height = 7, dpi = 300)
+
+
+#Physiographic regions
+physio2<- env.v %>%
+  group_by(physio) %>%
+  filter(!physio=="") %>%
+  summarise(area=(sum(physio.area))) %>%
+  as.data.frame() 
+#%>% dplyr::select(-geometry) 
+physio$cnts <- aggregate(physio$cnt, list(physio$physio), FUN=sum)
+physio2$area.km <- set_units(physio2$area, "km^2") #Add a column with area in kilometers squared
+
+
+
+physio.prop <- ggplot(physio, aes(x=area.kms, y=cnt, color=PROVINCE)) +
+  geom_abline(intercept = 0, slope = as.numeric(nrow(env.v)/(sum(physio2$area.kms))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=5) +
+  #geom_text(vjust=-1, label= physio2$physio, size=3) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  labs(title="Collections across proportional space", x="Physiographic area", y="Collections (#)") +
+  theme(legend.position = "right")+
+  theme(legend.key.size = unit(.01, 'cm')) +
+  theme_bw()
+physio.prop
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/physio_proportional.png", physio.prop, width = 10, height = 6, dpi = 300)
+
+
+
+```
+
+
+##Sociopolitical layers
+```{r}
+#Ownership regions
+
+own2<- env.v %>%
+  group_by(ownership) %>%
+  filter(!ownership=="") %>%
+  summarise(area=(sum(own.area))) %>%
+  as.data.frame() 
+#%>%dplyr::select(-geometry) 
+own2$cnts <- aggregate(own$cnt, list(own$ownership), FUN=sum)
+own2$area.km <- set_units(own2$area, "km^2") #Add a column with area in kilometers squared
+
+
+own.prop <- ggplot(own2, aes(x=area.km, y=cnts$x, color=ownership)) +
+  geom_abline(intercept = 0, slope = as.numeric(nrow(env.v)/(sum(own2$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=8) +
+  #geom_text(vjust=-1, label= swbio2$swbiocomm, size=3) +
+  labs(x="Land ownership area", y=NULL) +
+  theme(axis.text.y = element_text(size=12))+
+  theme(legend.key.size = unit(.03, 'cm')) +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme_bw()
+own.prop 
+
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/own_proportional_NOLABS.png", own.prop, width = 10, height = 6, dpi = 300)
+
+
+```
+
+###Ownership panel
+```{r}
+library(patchwork)
+
+###SMALL PANELS
+own.panel1 <- (own3 + own2) / swbioHM.b +
+  plot_layout(heights = c(3, 2)) +
+  theme_minimal()
+
+swbio.panel2 <- swbioHM.b /(p1 + p4) +
+  plot_layout(heights = c(3, 2)) +
+  theme_minimal()
+
+swbiopan2 <- p1 + p4 +
+  plot_layout(widths = c(3,2))
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbio.panel2.png", swbiopan2, width = 10, height = 6, dpi = 300) 
+
+
+
+###FULL PANEL
+
+own.big <- (own2 + own1 + own3) / ownHM.b #this is the figure with four panels
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/own.big.png", own.big, width = 16, height = 12, dpi = 300) 
+
+
+###SUB IN MAP
+
+own.toppanel<-own.map + own.bar + own.prop
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/own.toppanel.png", own.toppanel, width = 16, height = 12, dpi = 300) 
+
+own.big <- own.toppanel / ownHM.b +
+  plot_layout(heights = c(4,2))
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/own.big.png", own.big, width = 16, height = 12, dpi = 300) 
+
+```
+
+
+###Protected areas layers
+```{r}
+#Protected regions
+
+protect2<- env.v %>%
+  group_by(protection) %>%
+  filter(!protection=="") %>%
+  summarise(area=(sum(acec.area))) %>%
+  as.data.frame() 
+#%>%dplyr::select(-geometry) 
+protect2$cnts <- aggregate(protect$cnt, list(protect$protection), FUN=sum)
+protect2$area.km <- set_units(protect2$area, "km^2") #Add a column with area in kilometers squared
+
+protect2 <- protect2 %>% 
+  filter(!protection=="unprotected") #remove if you want to include unprotected, but it messes things up a bit
+
+protect.prop <- ggplot(protect2, aes(x=area.km, y=log(cnts$x), color=protection)) +
+  geom_abline(intercept = 0, slope = as.numeric(nrow(env.v2)/(sum(protect2$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=5) +
+  geom_text(vjust=2, label= protect2$protection, size=3) +
+  labs(title="Collections across proportional space (log scale)", x="Protection area", y="Collections (#)") +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(legend.position = "none")
+
+protect.prop #this is the full dataset of all the protected areas. 
+protect.prop <- protect.prop + theme(legend.position="none")
+
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Proportional plots/protection_proportional_LABELS.png", protect.prop, width = 10, height = 6, dpi = 300)
+
+
+#USE only the top 15 best represented to make another propotional plot
+view(top.acec)
+
+protect.sub<-top.acec %>% 
+  left_join(protect2, by="protection")
+
+protect.prop.sub <- ggplot(protect.sub, aes(x=area.km, y=count, color=protection)) +
+  geom_abline(intercept = 0, slope = as.numeric(nrow(env.v2)/(sum(protect2$area.km))), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=5) +
+  geom_text(vjust=2, label= protect.sub$protection, size=3) +
+  labs(title="Collections across proportional space (top 15 areas)", x="Protection area", y="Collections (#)") +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme(legend.position = "none")
+protect.prop.sub
+
+
+
+```
+
+
+##Abiotic layers
+```{r}
+#Geologic regions
+geo2 <- geo %>%
+  group_by(geologic) %>%
+  summarise(area=sum(georeg.area)) 
+geo2$cnts <- aggregate(geo$cnt, list(geo$geologic), FUN=sum)
+
+geol.prop <- ggplot(geo2, aes(x=area, y=cnts$x, color=geologic)) +
+  geom_abline(intercept = 0, slope = nrow(env.v)/(sum(geo2$area)), color = "#666666", size = 1, linetype = "dotted") +
+  geom_point(stat="identity", size=5) +
+  #geom_text(vjust=-1, label= geo2$geologic, size=3) +
+  labs(title="Collections across proportional space", x="Geologic area (meters squared)", y="Collections (#)") +
+  scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+  theme_bw()
+geol.prop 
+
+geol.prop <- geo.prop +  theme(legend.position = "none")
+
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/geo_proportional.png", geo.prop, width = 10, height = 6, dpi = 300)
+
+
+```
+
+###Elevation panel plot
+```{r}
+library(patchwork)
+e2+e1+e3
+
+elev.top <- elev.map + elev.bar + elev.prop.NoLabs
+
+elev.big <- elev.top / elevHM.b +
+  plot_layout(heights = c(4,2)) +
+  theme_minimal()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbio.big.png", elev.big, width = 16, height = 12, dpi = 300) 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/elev.big.png", elev.big, width = 16, height = 12, dpi = 300) 
+
+
+
+```
+
+#Main panel plots for manuscript
+###---Elevation
+
+###---Temperature
+```{r}
+###Redo color for elevation levels so they're consistent across the top panel
+
+plot_scheme(colour("smooth rainbow")(10), colours=T)
+custom.colors = c("#E8ECFB", "#B997C7", "#824D99", "#4E78C4", "#57A2aC", "#7EB875", "#D0B541", "#E67F33", "#CE2220", "#521A13")
+
+
+
+##TOP PANEL
+elev.map <- elev.map2 + 
+  theme(legend.position = "none") +
+  theme(axis.title.x = element_blank()) +
+  labs(title=NULL)
+
+elev.bar <- elev.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL) +
+  #scale_color_manual(values=custom.colors) + #Reset the color order for variables
+  theme(legend.position = "none") 
+#+ theme_bw()
+
+elev.bar <- elev.bar + theme(legend.position="none")
+  
+
+elev.prop<- elev.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+#physio.prop <- physio.prop+theme(legend.position = "none")
+
+elev.top <- (elev.map + elev.bar + elev.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/elevaiton.top.png", elev.top, width = 12, height = 6, dpi = 300) 
+
+
+
+###BOTTOM PANELS
+temp.bottom <- tempHM.b / temp.pdHM1 / temp.pdHM2
+
+#remove axes as needed
+tempHM.b <- tempHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+temp.pdHM1 <- temp.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+temp.pdHM2 <- temp.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+temp.bottom <- (tempHM.b / temp.pdHM1 / temp.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/temperature.bottom.png", temp.bottom, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+temppanel <- temp.top / temp.bottom +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/tempPanel.png", temppanel, width = 12, height = 8, dpi = 300) 
+
+```
+
+####---Ownership
+```{r}
+
+own.top<- (own.map + own.bar + own.prop)
+own.bottom <- ownHM.b / own.pdHM1 / own.pdHM2
+
+#remove axes as needed
+ownHM.c <- ownHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+own.pdHM3 <- own.pdHM1 + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+own.pdHM4 <- own.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+own.bottom2 <- (ownHM.c / own.pdHM3 / own.pdHM4) + layout
+
+
+#create the panel plot
+o1 <- own.top / own.bottom2 +
+  plot_layout(heights = c(6,3)) +
+  theme_minimal()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ownPanel.png", o1, width = 16, height = 12, dpi = 300) 
+
+```
+
+####---Protection
+
+```{r}
+library(patchwork)
+
+protect.top<- (acec.map + protect.bar + protect.prop)
+own.bottom <- ownHM.b / own.pdHM1 / own.pdHM2
+
+#remove axes as needed
+ownHM.c <- ownHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+own.pdHM3 <- own.pdHM1 + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+own.pdHM4 <- own.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+own.bottom2 <- (ownHM.c / own.pdHM3 / own.pdHM4) + layout
+
+
+#create the panel plot
+o1 <- own.top / own.bottom2 +
+  plot_layout(heights = c(6,3)) +
+  theme_minimal()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/ownPanel.png", o1, width = 16, height = 12, dpi = 300) 
+
+```
+
+
+####---SWbio
+```{r}
+
+swbio.top<- (swbio.map + swbio.bar + swbio.prop)
+swbio.bottom <- swbioHM.b / swbio.pdHM1 / swbio.pdHM2
+
+#remove axes as needed
+swbioHM.c <- swbioHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+swbio.pdHM3 <- swbio.pdHM1 + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+swbio.pdHM4 <- swbio.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+swbio.bottom2 <- (swbioHM.c / swbio.pdHM3 / swbio.pdHM4) + layout
+
+
+#create the panel plot
+swb1 <- swbio.top / swbio.bottom2 +
+  plot_layout(heights = c(6,3)) +
+  theme_minimal()
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbioPanel.png", swb1, width = 8, height = 6, dpi = 300) 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbioPanel_top.png", swbio.top, width = 8, height = 6, dpi = 300) 
+
+
+
+```
+
+
+#Supplemental panel plots for manuscript
+###---Ecoregion level 3
+```{r}
+##TOP PANEL
+eco3.map <- eco3.map +  theme(legend.position = "none")
+
+ecoreg3.bar <- ecoreg3.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  theme(legend.position = "none") 
+
+eco3.prop<- eco3.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+eco3.prop <- eco3.prop+
+  theme(legend.position = "none")
+
+eco3.top <- (eco3.map + ecoreg3.bar + eco3.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/eco3.top.png", eco3.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+eco3.bottom <- eco3HM.b / ecoreg3.pdHM1 / ecoreg3.pdHM2
+
+
+#remove axes as needed
+eco3HM.b <- eco3HM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+ecoreg3.pdHM1 <- ecoreg3.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+ecoreg3.pdHM2 <- ecoreg3.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+eco3.bottom2 <- (eco3HM.b / ecoreg3.pdHM1 / ecoreg3.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/eco3.bottom.png", eco3.bottom2, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+
+eco3panel <- eco3.top / eco3.bottom2 +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/ecoreg3Panel.png", eco3panel, width = 12, height = 8, dpi = 300) 
+
+
+```
+
+###---Ecoregion level 4
+```{r}
+##TOP PANEL
+eco4.map <- eco4.map +  theme(legend.position = "none")
+
+ecoreg4.bar <- ecoreg4.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  theme(legend.position = "none") 
+
+eco4.prop<- eco4.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+eco4.prop <- eco4.prop+theme(legend.position = "none")
+
+eco4.top <- (eco4.map + ecoreg4.bar + eco4.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/eco4.top.png", eco4.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+eco4.bottom <- eco4HM.b / ecoreg4.pdHM1 / ecoreg4.pdHM2
+
+
+#remove axes as needed
+eco4HM.b <- eco4HM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+ecoreg4.pdHM1 <- ecoreg4.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+ecoreg4.pdHM2 <- ecoreg4.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+eco4.bottom2 <- (eco4HM.b / ecoreg4.pdHM1 / ecoreg4.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/eco4.bottom.png", eco4.bottom2, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+
+eco4panel <- eco4.top / eco4.bottom2 +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/ecoreg4Panel_LEGEND.png", eco4panel, width = 16, height = 14, dpi = 300) 
+
+
+```
+
+###---Physiogeographic regions
+```{r}
+##TOP PANEL
+physio.map <- physio.map +  theme(legend.position = "none")
+
+physio.bar <- physio.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  theme(legend.position = "none") 
+
+physio.prop<- physio.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+#physio.prop <- physio.prop+theme(legend.position = "none")
+
+physio.top <- (physio.map + physio.bar + physio.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/physio.top.png", physio.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+physio.bottom <- physioHM.b / physio.pdHM1 / physio.pdHM2
+
+#remove axes as needed
+physioHM.b <- physioHM.b  + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+physio.pdHM1 <- physio.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+physio.pdHM2 <- physio.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+physio.bottom <- (physioHM.b / physio.pdHM1 / physio.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/physio.bottom.png", physio.bottom, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+physiopanel <- physio.top / physio.bottom +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/physioPanel.png", physiopanel, width = 12, height = 8, dpi = 300) 
+
+
+```
+
+###---Geological regions
+```{r}
+##TOP PANEL
+geol.map <- geol.map +  theme(legend.position = "none")
+
+geol.bar <- geol.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  theme(legend.position = "none") 
+
+geol.prop<- geo.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+#physio.prop <- physio.prop+theme(legend.position = "none")
+
+geol.top <- (geol.map + geol.bar + geol.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/geol.top.png", geol.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+geol.bottom <- geolHM.b / geo.pdHM1 / geo.pdHM2
+
+#remove axes as needed
+geolHM.b <- geolHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+geo.pdHM1 <- geo.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+geo.pdHM2 <- geo.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+geol.bottom <- (geolHM.b / geo.pdHM1 / geo.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/geologic.bottom.png", geol.bottom, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+geologicpanel <- geol.top / geol.bottom +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/geologicPanel.png", geologicpanel, width = 12, height = 8, dpi = 300) 
+
+
+```
+
+
+
+
+###---Protected areas (ACEC)
+```{r}
+##TOP PANEL
+acec.map <- acec.map +  theme(legend.position = "none")
+
+protect.bar <- protect.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  theme(legend.position = "none") 
+
+
+
+protect.prop<- protect.prop + #all records
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+protect.prop <- protect.prop+
+  theme(legend.position = "none")
+
+protect.prop <- protect.prop.sub + #top 15 acec areas
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+
+
+
+protect.top <- (acec.map + protect.bar + protect.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/eco3.top.png", eco3.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+protect.bottom <- protectHM.b / acec.pdHM1 / acec.pdHM2
+
+
+#remove axes as needed
+protectHM.b <- protectHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+acec.pdHM1 <- acec.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+acec.pdHM2 <- acec.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+protect.bottom2 <- (protectHM.b / acec.pdHM1 / acec.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/protection.bottom.png", protect.bottom2, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+
+protectpanel <- protect.top / protect.bottom2 +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/protectionPanel.png", protectpanel, width = 12, height = 8, dpi = 300) 
+
+
+```
+
+###---Precipitation
+```{r}
+###Redo color for elevation levels so they're consistent across the top panel
+
+plot_scheme(colour("smooth rainbow")(10), colours=T)
+custom.colors = c("#E8ECFB", "#B997C7", "#824D99", "#4E78C4", "#57A2aC", "#7EB875", "#D0B541", "#E67F33", "#CE2220", "#521A13")
+
+
+##TOP PANEL
+ppt.map <- ppt.map2 +  theme(legend.position = "none")
+
+ppt.bar <- ppt.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  #scale_color_manual(values=custom.colors) + #Reset the color order for variables
+  theme(legend.position = "none") +
+  theme_bw()
+
+ppt.bar <- ppt.bar + theme(legend.position="none")
+  
+
+ppt.prop<- ppt.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+#physio.prop <- physio.prop+theme(legend.position = "none")
+
+ppt.top <- (ppt.map + ppt.bar + ppt.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/ppt.top.png", ppt.top, width = 10, height = 6, dpi = 300) 
+
+
+###BOTTOM PANELS
+ppt.bottom <- pptHM.b / ppt.pdHM1 / ppt.pdHM2
+
+#remove axes as needed
+pptHM.b <- pptHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+ppt.pdHM1 <- ppt.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+ppt.pdHM2 <- ppt.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+ppt.bottom <- (pptHM.b / ppt.pdHM1 / ppt.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/precipitation.bottom.png", ppt.bottom, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+pptpanel <- ppt.top / ppt.bottom +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/precipPanel.png", pptpanel, width = 12, height = 8, dpi = 300) 
+
+
+```
+
+###---Temperature
+```{r}
+###Redo color for elevation levels so they're consistent across the top panel
+
+plot_scheme(colour("smooth rainbow")(10), colours=T)
+custom.colors = c("#E8ECFB", "#B997C7", "#824D99", "#4E78C4", "#57A2aC", "#7EB875", "#D0B541", "#E67F33", "#CE2220", "#521A13")
+
+
+
+##TOP PANEL
+temp.map <- temp.map2 +  theme(legend.position = "none")
+
+temp.bar <- temp.bar + 
+  theme(axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  #scale_color_manual(values=custom.colors) + #Reset the color order for variables
+  theme(legend.position = "none") +
+  theme_bw()
+
+temp.bar <- temp.bar + theme(legend.position="none")
+  
+
+temp.prop<- temp.prop +
+  theme( axis.title.x = element_blank(), axis.text.x=element_blank()) +
+  labs(title=NULL)  +
+  theme_bw()
+#physio.prop <- physio.prop+theme(legend.position = "none")
+
+temp.top <- (temp.map + temp.bar + temp.prop)
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/temp.top.png", temp.top, width = 10, height = 6, dpi = 300) 
+
+
+
+###BOTTOM PANELS
+temp.bottom <- tempHM.b / temp.pdHM1 / temp.pdHM2
+
+#remove axes as needed
+tempHM.b <- tempHM.b + theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank())
+
+temp.pdHM1 <- temp.pdHM1 + 
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  theme(legend.position="none")
+
+temp.pdHM2 <- temp.pdHM2 + theme(axis.title.x = element_blank(), axis.title.y = element_blank())+
+  theme(legend.position="none")
+
+temp.bottom <- (tempHM.b / temp.pdHM1 / temp.pdHM2) + layout
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/temperature.bottom.png", temp.bottom, width = 10, height = 6, dpi = 300) 
+
+
+#Full panel plot
+temppanel <- temp.top / temp.bottom +
+  plot_layout(heights = c(4,3)) +
+  theme_minimal()
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/Panel plots/tempPanel.png", temppanel, width = 12, height = 8, dpi = 300) 
+
+```
+
+
+
+#
+#
+#
+#
+#
+#Singly collected records
+
+```{r}
+sings_counts <- singlesDF.dat %>%
+  filter(!Accepted_family=="") %>%
+  group_by(Accepted_family) %>%
+  summarise(count = n())
+
+sings_gen <- singlesDF.dat %>%
+  filter(!Genus_matched == "") %>%
+  group_by(Genus_matched) %>%
+  tally(sort=TRUE)
+write.csv(sings_gen, "singlyCollected_generaAll.csv", row.names = TRUE)
+
+
+sings.barplot<-ggplot(data = sings_counts, aes(x = reorder(Accepted_family, -count), y = count)) +
+  geom_bar(stat = "identity", fill = "#6059A9") +
+  labs(title = "Bar Plot of Rows per Category",
+       x = "Category",
+       y = "Count") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 20),  # Adjust size here
+    axis.text.y = element_text(size = 20),  # Adjust size here
+    axis.title = element_text(size = 20),   # Adjust size here
+    plot.title = element_text(size = 20)    # Adjust size here
+  )
+sings.barplot
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/singles.families.png", sings.barplot, width = 18, height = 12, dpi = 300) 
+
+
+#Barplot
+data=singlesDF.env
+column = c("ecoreg3")
+createBarPlot <- function(data, column) {
+  # Count occurrences of each category
+  counts <- table(data[[column]])
+
+  
+  # Convert counts to a data frame
+  counts_df <- data.frame(categories = names(counts), count = as.numeric(counts))
+  
+  # Create bar plot using ggplot2
+  temp <<- ggplot(counts_df, aes(x = reorder(categories, -count), y = count, fill=factor(categories))) +
+    geom_bar(stat = "identity") +
+    labs(title = NULL, x = "Land use category", y = "Number of records") +
+    theme(panel.background = element_blank())+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size=6)) +
+    theme(axis.text.y = element_text(size=8))+
+    scale_fill_smoothrainbow(discrete=TRUE, reverse=FALSE) +
+    theme(legend.position = "none") 
+
+
+     
+  
+  temp
+}
+
+eco3.bar.sings <- createBarPlot(singlesDF, "ecoreg3")
+
+
+for (i in 1:length(cat)){
+  createBarPlot(data, cat[i])
+  ggsave(temp, file=paste0("barplot_", cat[i], ".png"), width = 6, height = 4, dpi = 300)
+}
+
+
+# Create a list to store the plots
+plot_list <- list()
+
+# Loop through each variable and create/save the plots
+for (i in 1:length(cat)) {
+  variable_name <- cat[i]
+  plot <- createBarPlot(data, variable_name)
+  filename <- paste0("Cat_plot_", variable_name, ".png")
+  
+  # Save the plot
+  ggsave(filename = filename, plot = plot, width = 6, height = 4, dpi = 300)
+  
+  # Add the plot to the list
+  plot_list[[i]] <- plot
+}
+
+# Arrange the saved plots into a panel plot
+panel_plot <- plot_grid(plotlist = plot_list, ncol = 3)  # Adjust the number of columns as needed
+
+# Print the panel plot
+print(panel_plot)
+
+
+#MAP singles
+#data in sf format
+class(singlesDF)
+crs(singlesDF$geometry)
+sings.map <- st_transform(singlesDF, crs = "+proj=utm +zone=13 +datum=NAD83") #checking singly-collected taxa
+
+plot(st_geometry(sings.map))
+
+#interactive map
+interactive_singles = mapview(sings.map, cex = 4, alpha = .5, popup = NULL, col.regions="darkblue")
+interactive_singles 
+
+
+
+####
+#Basic NM map
+sings.coords<- singlesDF %>%
+  select(geometry) %>%
+  as.data.frame()
+
+
+nm_map <- get_stamenmap(
+  bbox = c(left = -109.5, bottom = 31, right = -102.8, top = 37.5), 
+  maptype = "toner-lite",
+  zoom = 7
+)
+ggmap(nm_map)
+
+singscoords<- st_coordinates(singlesDF)
+
+#add coordinates for singly-collected taxa
+sings.map<-ggmap(nm_map) + 
+  geom_point(data = as.data.frame(singscoords), 
+             aes(x = X, y = Y),
+             size = 5, alpha=0.5, color="#6059A9") +
+   annotation_north_arrow(location = "br", which_north = "true", style = north_arrow_fancy_orienteering,
+                         pad_x = unit(0.5, "in"), pad_y = unit(0.5, "in")) +
+  labs(x = "Longitude", 
+         y = "Latitude") +
+  theme(axis.text = element_text(size=24)) +
+    theme_bw() 
+
+ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/singleRecordsMap.png", sings.map, width = 8, height = 8, dpi = 300)
+
+```
+
+
+#
+#
+#
+#
+#Tables for supplemental 
+There are a number of tables that we want to include in the supplement for the paper:
+1. Spatial category summary table
+2. Full NM summary table
+3. Taxonomic comparison table
+4. Singly-collected table
+
+####Table 1
+```{r}
+as.data.frame(env.v)
+
+try <- env.v |> 
+  select(-geometry) |>
+  group_by(ecoreg3, ecoreg3.area) |>
+  count()
+
+
+```
+
+
+
+
+
+
+#Functions for later
+###########################################################################################################################################################
+For the plots that require both the category and corresponding area for that category, perhaps I could
+i) write a function that groups and counts the number of records in each category by categorical area, then saves the new dataframe in a list. Each cell in this list would then be a dataframe 
+ii) write a second function that produces a ggplot of each dataframe in the list
+
+```{r}
+
+institutions <- as.data.frame(table(dat$institutionCode))
+
+write.csv(institutions, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Tables/institutionCode_summaryTable.csv", row.names=TRUE)
+
+instit.geo <- as.data.frame(table(env.v$institutionCode))
+
+instit.full <- full_join(institutions, instit.geo, by = "Var1")
+
+instit.full <- instit.full %>%
+  rename(Institution = Var1) %>%
+  rename(no.Recs.All = Freq.x) %>%
+  rename(no.Recs.Georef = Freq.y)
+
+write.csv(instit.full, "/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Tables/institutionCode_summaryTable.csv", row.names=TRUE)
+
+
+####
+
+
+```
+
+
+
+```{r}
+
+
+# Function that creates dataframes for each of the different cateogories
+
+catArea<-function(data, cat, area){
+
+for (i in 1:length(cat)) {
+  for (j in 1:length(area)) { 
+
+  temp <- data %>%
+    group_by_all(cat[i], area[j]) %>%
+    summarise(count=n(), area=sum(area[j]))
+  
+  temp2 <- temp %>%
+  mutate(cnts.area=count/area)
+  
+  temp2
+  }}
+
+  
+}
+
+catArea(env.v, cat, area)
+
+
+
+
+```
+
+
+```{r functions}
+catArea <- function(data, category, area) {
+  result_list <- list()  # List to store the resulting data frames
+  
+  for (i in 1:length(category)) {
+    for (j in 1:length(area)) {
+      # Group by category and area, and summarize data
+    temp <- data %>%
+        group_by(.data[[category[i]]], .data[[area[j]]]) %>%
+        summarise(count = n(), area_sum = sum(.data[[area[j]]]))
+      
+      # Calculate the counts per unit of area
+      temp2 <- temp %>%
+        mutate(cnts_area = count / area_sum)
+      
+      # Create a unique name for each resulting data frame
+      name <- paste("Category", i, "Area", j, sep = "_")
+      
+      # Store the resulting data frame in the list
+      result_list[[name]] <- temp2
+    }
+  }
+  
+  return(result_list)
+}
+
+
+
+# Call the catArea function
+result <- catArea(singlesDF, cat) #Unfortunately it produces a recursive list of dfs with all possible category/area combos
+
+
+
+###Subset the recursive list to include only the elements that makes sense (i.e. matching category with area)
+# Function to extract specific elements from a recursive list
+extract_elements <- function(recursive_list, element_names) {
+  if (!is.list(recursive_list)) {
+    return(NULL)
+  } else {
+    extracted_elements <- vector("list", length(element_names))
+    for (i in seq_along(element_names)) {
+      extracted_elements[[i]] <- recursive_list[[element_names[i]]]
+    }
+    return(extracted_elements)
+  }
+}
+
+# Extract specific elements from the recursive list
+elements_to_extract <- c("Category_1_Area_1", "Category_2_Area_2", "Category_3_Area_3", "Category_4_Area_4", "Category_5_Area_5", "Category_6_Area_6", "Category_7_Area_7")
+
+
+#extract and flatten the elements that I want so it's no longer recursive (result_sub is just a list)
+result_sub <- extract_elements(result, elements_to_extract)
+result_sub<- purrr::flatten(result_sub)
+
+
+#Plotting from a list
+# Function to create ggplot for specified columns of a data frame
+create_plot <- function(df, x_column, y_column) {
+  ggplot(df, aes(x = reorder(x_column, -y_column), fill=x_column, y = y_column)) +
+    geom_dotplot(stat = "identity", colour = "black", linewidth=0.05) + 
+    theme(axis.text.x = element_text(angle = 60, size = 6, colour = "black", vjust = 1, hjust = 1, face= "bold"), 
+    axis.title.x = element_text(size = 8, face = "bold"), 
+    axis.title.y = element_text(size = 8, face = "bold"), legend.title = element_text(size = 8, face = "bold"), 
+    axis.text.y = element_text(colour = "black", size = 4, face = "bold")) + 
+    theme(legend.position = "none") +
+    #scale_y_continuous(expand = c(0,0)) + 
+    labs(x = "Category", y = "#taxaonomic collections/ecoregion area") + 
+    scale_fill_muted()
+} 
+
+
+
+# Loop through the recursive list and create plots for specified columns
+for (i in result_sub) {
+  i= result_sub[[4]]
+  df <- as.data.frame(i)
+  #if (is.data.frame(i)) {
+  
+  # Specify the columns you want to plot
+  x_column = df[,1]
+  y_column = as.numeric(df[,3])
+  
+  # Create the plot
+  plot <- create_plot(df, x_column, y_column)
+    
+  # Display the plot
+  print(plot)
+    
+  ggsave(plot, file=paste0("prop_plot", colnames(df[1]), ".png"), width = 6, height = 4, dpi = 300)
+
+  }
+}
+
+
+# Print the resulting data frames. ISSUE: it iterated through all of the possible category and area combinations. Just need to pull out the cells I actually want
+print(result)
+
+
+
+###TRY plotting
+plotDataFrames <- function(result, category) {
+  # Iterate over each dataframe in the result list
+  for (i in seq_along(result)) {
+    df <- result[[i]]  # Get the dataframe from the list
+    
+    # Create the plot using ggplot2
+    plot <- ggplot(df, aes(x = .data[[category[1]]], y = cnts_area)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      labs(
+        x = category[1],
+        y = "Proportion of Counts",
+        title = paste("Category:", i)
+      )
+    
+    # Print the plot
+    print(plot)
+  }
+}
+
+plotDataFrames(result, cat)
+
+```
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Function to plot proportion of counts given grouped sum of area
+plotProportion <- function(data, count_var, area_var) {
+  for (var1 in count_var) {
+    for (var2 in area_var) {
+      # Group, summarize, and calculate proportion
+      temp <- data %>%
+        group_by({{ var1 }}, {{ var2 }}) %>%
+        summarise(counts = n(), area = sum({{ var2 }})) %>%
+        mutate(proportion = counts / sum(counts))
+
+      # Plot proportion
+      plot <- ggplot(summary_data, aes(x = {{ var1 }}, y = proportion)) +
+        geom_col() +
+        labs(title = "Proportion of Counts by Grouped Sum of Area",
+             x = deparse(substitute(var1)),
+             y = "Proportion")
+
+      # Print the plot
+      print(plot)
+    }
+  }
+}
+
+# Example usage
+# Assuming you have a data frame called 'dat_cl' with appropriate columns
+count_vars <- cat # List of count variables
+area_vars <- area # List of corresponding area variables
+
+plotProportion(env.v, count_var = count_vars, area_var = area_vars)
+
+
+
+ls <- list()
+cat<- cat
+for (i in length(cat)) {
+  # Subset the data for the current category
+  subset_df <- subset(env.v, category == cat[i])
+  
+  # Perform summarization
+  summary_df <- summarise(subset_df, total = sum(value))
+  
+  # Save the summarized data frame in the result list
+  ls[[cat[i]]] <- summary_df
+}
+
+
+```
+

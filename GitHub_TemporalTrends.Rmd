@@ -1,0 +1,37 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+In this script we provide code to explore temporal trends in natural history collections data. The dataset we load has already been cleaned for taxonomic, spatial and anomolous problems. 
+
+Basically, this script produces analyses with time on the x-axis, regardless of response variable. 
+
+```{r}
+#libraries
+library(dplyr)
+library(lubridate)
+
+
+#load data
+load(file="datCleanAllRecords.RData") #dat is the data object
+
+```
+
+
+#General trends
+
+```{r}
+dat<-dat %>% filter(!year<1800)
+
+hist(dat$year, breaks=100)
+summary(dat$year) #impossible dates? 
+
+early<- dat %>% filter(!year<1800) %>% filter(year>1800, year<1900)
+earlymid <- dat %>% filter(year>1900, year<1950)
+latemid <- dat %>% filter(year>1950, year<2000) #most records in a general period
+late <- dat %>% filter(year>2000)
+
+
+
+```
