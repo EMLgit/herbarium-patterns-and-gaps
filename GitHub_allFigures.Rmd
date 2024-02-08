@@ -276,6 +276,10 @@ timefig
 ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/recordsovertime.png", timefig, width = 8, height = 4, units="in", dpi = 300)
 
 
+##Days of the week variation
+weekday.dat <- as.data.frame(weekdays(dat$date))
+table(weekday.dat)
+
 
 ###Monsoon years figure
 dat$year <- as.integer(dat$year) 
@@ -957,7 +961,7 @@ cat <- c("temp.bin", "ppt.bin", "elev.bin")
 
 
 data= env.v
-column = c("ecoreg3")
+column = c("physio")
 createBarPlot <- function(data, column) {
   # Count occurrences of each category
   counts <- table(data[[column]])
@@ -1076,8 +1080,6 @@ quantiles <- quantile(data$y, probs = c(0, 0.25, 0.5, 0.75, 1))
 # Define color palette
 colors <- c("red", "yellow", "green", "blue")
 
-
-
 ```
 
 
@@ -1176,6 +1178,7 @@ swbio.prop <- swbio.prop + theme(legend.position = "none")
 ggsave("/Users/elizabethlombardi/Desktop/Research/UNM/Herbarium collections patterns and gaps project/Figures/swbio_proportional.png", swbio.prop, width = 6, height = 7, dpi = 300)
 
 
+
 #Physiographic regions
 physio2<- env.v %>%
   group_by(physio) %>%
@@ -1183,18 +1186,17 @@ physio2<- env.v %>%
   summarise(area=(sum(physio.area))) %>%
   as.data.frame() 
 #%>% dplyr::select(-geometry) 
-physio$cnts <- aggregate(physio$cnt, list(physio$physio), FUN=sum)
-physio2$area.km <- set_units(physio2$area, "km^2") #Add a column with area in kilometers squared
+physio2$cnts <- aggregate(physio$cnt, list(physio$PROVINCE), FUN=sum)
+physio2$area.kms <- set_units(physio2$area, "km^2") #Add a column with area in kilometers squared
 
 
-
-physio.prop <- ggplot(physio, aes(x=area.kms, y=cnt, color=PROVINCE)) +
+physio.prop <- ggplot(physio2, aes(x=area.kms, y=cnts$x, color=physio)) +
   geom_abline(intercept = 0, slope = as.numeric(nrow(env.v)/(sum(physio2$area.kms))), color = "#666666", size = 1, linetype = "dotted") +
   geom_point(stat="identity", size=5) +
   #geom_text(vjust=-1, label= physio2$physio, size=3) +
   scale_color_smoothrainbow(discrete=TRUE, reverse=FALSE) +
   labs(title="Collections across proportional space", x="Physiographic area", y="Collections (#)") +
-  theme(legend.position = "right")+
+  theme(legend.position = "right") +
   theme(legend.key.size = unit(.01, 'cm')) +
   theme_bw()
 physio.prop
